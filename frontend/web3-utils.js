@@ -4,72 +4,65 @@ let signer;
 let userAddress;
 let contractAddress = CONFIG.CONTRACT_ADDRESS;
 let contract = null;
-const API_URL = "http://localhost:5000/api";
+
+// 1. ABI Definition
 const CONTRACT_ABI = [
     "function registerUser(string _name) public",
-    "function createLoan(address _borrower, uint256 _principal, uint256 _interestRate, uint256 _durationDays) public",
-    "function recordRepayment(uint256 _loanId, uint256 _amount) public",
+    "function recordRepayment(uint256 _loanId) public payable",
     "function recordDefault(uint256 _loanId) public",
+    "function recordLatePayment(uint256 _loanId) public",
     "function requestLoan(uint256 _amount, uint256 _interestRate, uint256 _durationDays, string memory _reason) public",
     "function approveLoan(address _borrower, uint256 _requestIndex) public",
     "function getLoanRequests(address _user) public view returns (tuple(uint256 requestId, address borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason, bool isApproved, bool isActive)[])",
     "function getCreditScore(address _user) public view returns (uint256)",
-    "function getCreditScoreBreakdown(address _user) public view returns (uint256, uint256, uint256, uint256)",
+    "function getCreditScoreBreakdown(address _user) public view returns (uint256, uint256, uint256, uint256, uint256, uint256)",
     "function getFinancialHistory(address _user) public view returns (tuple(string activityType, uint256 amount, string description, uint256 timestamp)[])",
-    "function getUserLoans(address _user) public view returns (tuple(uint256 loanId, address borrower, uint256 principal, uint256 interestRate, uint256 issueDate, uint256 dueDate, uint256 repaidAmount, bool isRepaid, bool isDefaulted)[])",
+    "function getUserLoans(address _user) public view returns (tuple(uint256 loanId, address borrower, uint256 principal, uint256 interestRate, uint256 issueDate, uint256 dueDate, uint256 repaidAmount, uint256 totalAmountToRepay, bool isRepaid, bool isDefaulted)[])",
     "function userExists(address _user) public view returns (bool)",
     "function getUserInfo(address _user) public view returns (tuple(string name, uint256 creditScore, uint256 totalLoans, uint256 totalRepayments, uint256 defaults, uint256 lastUpdated, bool isActive))",
     "function getAdmin() public view returns (address)",
     "function getLoanCount() public view returns (uint256)",
+    "function stake() public payable",
+    "function unstake(uint256 _amount) public",
+    "function stakes(address _user) public view returns (uint256)",
+    "function updateExternalScore(address _user, uint256 _score) public",
+    "function externalScores(address _user) public view returns (uint256)",
+    "function getAllUsers() public view returns (address[])",
     "event LoanRequested(uint256 indexed requestId, address indexed borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason)",
-    "event LoanApproved(uint256 indexed requestId, uint256 indexed loanId, address indexed borrower)"
+    "event LoanApproved(uint256 indexed requestId, uint256 indexed loanId, address indexed borrower)",
+    "event LoanCreated(uint256 indexed loanId, address indexed borrower, uint256 principal, uint256 interestRate, uint256 dueDate)",
+    "event Staked(address indexed user, uint256 amount, uint256 timestamp)",
+    "event Unstaked(address indexed user, uint256 amount, uint256 timestamp)",
+    "event ExternalScoreUpdated(address indexed user, uint256 score, uint256 timestamp)"
 ];
 
-// Set contract address and initialize
+// Set contract address
 function setContractAddress(newAddress) {
     if (!ethers.isAddress(newAddress)) {
         showStatus("Invalid contract address", "error");
         return false;
     }
-    
     contractAddress = newAddress;
     localStorage.setItem('creditScoreContractAddress', newAddress);
-    
     if (signer) {
         contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
     }
-    
     showStatus("Contract address set successfully!", "success");
     return true;
 }
 
-// Get contract address
-function getContractAddress() {
-    return contractAddress;
-}
+function getContractAddress() { return contractAddress; }
 
-// Initialize Web3 and check for MetaMask
+// Initialize Web3
 async function initWeb3() {
     if (window.ethereum) {
         try {
-            // Create ethers.js provider
             provider = new ethers.BrowserProvider(window.ethereum);
-            
-            // Listen for chain changes
-            window.ethereum.on('chainChanged', () => {
-                window.location.reload();
-            });
-            
-            // Listen for account changes
+            window.ethereum.on('chainChanged', () => window.location.reload());
             window.ethereum.on('accountsChanged', (accounts) => {
-                if (accounts.length === 0) {
-                    disconnectWallet();
-                } else {
-                    userAddress = accounts[0];
-                    updateWalletStatus();
-                }
+                if (accounts.length === 0) disconnectWallet();
+                else { userAddress = accounts[0]; updateWalletStatus(); }
             });
-            
             return true;
         } catch (error) {
             console.error("Error initializing Web3:", error);
@@ -84,14 +77,12 @@ async function initWeb3() {
 // Connect Wallet
 async function connectWallet() {
     try {
-        // First, switch to Sepolia network (Chain ID: 0xaa36a7)
         try {
             await window.ethereum.request({
                 method: 'wallet_switchEthereumChain',
                 params: [{ chainId: '0xaa36a7' }]
             });
         } catch (switchError) {
-            // If the chain doesn't exist, add it
             if (switchError.code === 4902) {
                 await window.ethereum.request({
                     method: 'wallet_addEthereumChain',
@@ -105,20 +96,12 @@ async function connectWallet() {
                 });
             }
         }
-        
-        // Now request accounts
-        const accounts = await window.ethereum.request({
-            method: 'eth_requestAccounts'
-        });
-        
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
         userAddress = accounts[0];
         signer = await provider.getSigner();
-        
-        // Initialize contract with the configured address
         if (contractAddress && ethers.isAddress(contractAddress)) {
             contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
         }
-        
         updateWalletStatus();
         return true;
     } catch (error) {
@@ -128,20 +111,19 @@ async function connectWallet() {
     }
 }
 
-// Disconnect Wallet
 function disconnectWallet() {
     userAddress = null;
     signer = null;
     updateWalletStatus();
     clearAllData();
+    resetTabs();
 }
 
-// Check if user is admin
 function isAdmin() {
     return userAddress && userAddress.toLowerCase() === CONFIG.ADMIN_ADDRESS.toLowerCase();
 }
 
-// Update Wallet Status Display & Role-Based UI
+// Update Wallet Status & Role UI
 function updateWalletStatus() {
     const statusDiv = document.getElementById('walletStatus');
     const connectBtn = document.getElementById('connectWallet');
@@ -151,171 +133,300 @@ function updateWalletStatus() {
         statusDiv.textContent = `Connected: ${userAddress.substring(0, 6)}...${userAddress.substring(38)}${adminLabel}`;
         connectBtn.textContent = "Disconnect";
         connectBtn.onclick = disconnectWallet;
-        updateUIByRole();
-        loadUserData();
+        loadUserData(); 
     } else {
         statusDiv.textContent = 'Not connected';
         connectBtn.textContent = 'Connect MetaMask';
         connectBtn.onclick = connectWallet;
-        updateUIByRole();
+        resetTabs();
     }
 }
 
-// Update UI visibility based on user role
-function updateUIByRole() {
-    const adminTabButton = document.querySelector('[data-tab="admin"]');
+function resetTabs() {
+    const userTabs = ['dashboard', 'register', 'history', 'loans', 'requestLoan', 'collateral'];
+    userTabs.forEach(t => {
+        const btn = document.querySelector(`[data-tab="${t}"]`);
+        if (btn) btn.style.display = 'flex';
+    });
+    const adminBtn = document.querySelector(`[data-tab="admin"]`);
+    if (adminBtn) adminBtn.style.display = 'none';
     
-    if (isAdmin()) {
-        // Show admin tab button for admins
-        if (adminTabButton) adminTabButton.style.display = 'flex';
-    } else {
-        // Hide admin tab button for regular users
-        if (adminTabButton) adminTabButton.style.display = 'none';
+    // Reset Repayment Form visibility
+    const repaymentForm = document.getElementById('repaymentForm');
+    if(repaymentForm) {
+        const card = repaymentForm.closest('.card');
+        if(card) card.style.display = 'block';
     }
+
+    // Reset Titles
+    const loansHeader = document.querySelector('#loans .card-large h2');
+    if(loansHeader) loansHeader.innerHTML = '<i class="fas fa-credit-card"></i> Your Loans';
+
+    switchTab('dashboard');
 }
 
-// Clear all user data from display
 function clearAllData() {
     document.getElementById('creditScore').textContent = '-';
-    document.getElementById('scoreDescription').textContent = 'Connect wallet to view your credit score';
-    document.getElementById('scoreBreakdown').innerHTML = '<p>Connect wallet to view breakdown</p>';
-    document.getElementById('userProfile').innerHTML = '<p>Connect wallet to view profile</p>';
-    document.getElementById('financialHistory').innerHTML = '<p>Connect wallet to view history</p>';
-    document.getElementById('loansList').innerHTML = '<p>Connect wallet to view loans</p>';
+    document.getElementById('scoreDescription').textContent = 'Connect wallet';
+    document.getElementById('scoreBreakdown').innerHTML = '<p>Connect wallet</p>';
+    document.getElementById('userProfile').innerHTML = '<p>Connect wallet</p>';
+    document.getElementById('financialHistory').innerHTML = '<p>Connect wallet</p>';
+    document.getElementById('loansList').innerHTML = '<p>Connect wallet</p>';
 }
 
-// Fetch user data from blockchain
+// ========== CORE DATA LOADING ==========
 async function loadUserData() {
-    if (!userAddress || !contract) {
-        console.log("Not ready for loadUserData - userAddress:", userAddress, "contract:", !!contract);
-        return;
+    if (!userAddress || !contract) return;
+
+    try {
+        // 1. Handle ADMIN View
+        if (isAdmin()) {
+            console.log("Admin detected. Configuring UI...");
+            
+            // UI Adjustments for Admin
+            const adminBtn = document.querySelector('[data-tab="admin"]');
+            if (adminBtn) adminBtn.style.display = 'flex';
+
+            // Hide User-Specific Tabs
+            ['dashboard', 'requestLoan', 'register', 'collateral'].forEach(t => {
+                const btn = document.querySelector(`[data-tab="${t}"]`);
+                if (btn) btn.style.display = 'none';
+            });
+            
+            // Hide Repayment Form for Admin (As requested)
+            const repaymentForm = document.getElementById('repaymentForm');
+            if(repaymentForm) {
+                const card = repaymentForm.closest('.card');
+                if(card) card.style.display = 'none';
+            }
+
+            // Change "Your Loans" Title to "All System Loans"
+            const loansHeader = document.querySelector('#loans .card-large h2');
+            if(loansHeader) loansHeader.innerHTML = '<i class="fas fa-database"></i> All System Loans';
+
+            // Force switch to Admin Tab
+            switchTab('admin');
+
+            // Load Admin Data
+            loadAdminDashboard();
+            loadUserRegistry();
+            loadAdminRequests();
+            loadAdminHistory();
+            loadAllSystemLoans(); // NEW: Load ALL loans for Admin
+            
+            return; 
+        }
+
+        // 2. Handle USER View
+        const adminBtn = document.querySelector('[data-tab="admin"]');
+        if (adminBtn) adminBtn.style.display = 'none';
+
+        // Restore UI for Regular User
+        const repaymentForm = document.getElementById('repaymentForm');
+        if(repaymentForm) {
+            const card = repaymentForm.closest('.card');
+            if(card) card.style.display = 'block';
+        }
+        const loansHeader = document.querySelector('#loans .card-large h2');
+        if(loansHeader) loansHeader.innerHTML = '<i class="fas fa-credit-card"></i> Your Loans';
+
+        // Show User Tabs
+        ['dashboard', 'requestLoan', 'collateral'].forEach(t => {
+            const btn = document.querySelector(`[data-tab="${t}"]`);
+            if (btn) btn.style.display = 'flex';
+        });
+
+        // Check Registration
+        let exists = await contract.userExists(userAddress);
+        const registerBtn = document.querySelector('[data-tab="register"]');
+        
+        if (exists) {
+            if (registerBtn) registerBtn.style.display = 'none';
+            
+            const regTab = document.getElementById('register');
+            if (regTab && regTab.classList.contains('active')) {
+                switchTab('dashboard');
+            }
+
+            // Load User Data
+            const score = await contract.getCreditScore(userAddress);
+            const scoreNum = Number(score);
+            document.getElementById('creditScore').textContent = scoreNum;
+            document.getElementById('scoreDescription').textContent = getScoreDescription(scoreNum);
+
+            const userInfo = await contract.getUserInfo(userAddress);
+            const timestamp = Number(userInfo.lastUpdated) * 1000;
+            document.getElementById('lastUpdated').textContent = new Date(timestamp).toLocaleDateString();
+            displayUserProfile({
+                name: userInfo.name,
+                totalLoans: userInfo.totalLoans.toString(),
+                totalRepayments: userInfo.totalRepayments.toString(),
+                defaults: userInfo.defaults.toString(),
+                isActive: userInfo.isActive,
+                lastUpdated: timestamp
+            });
+
+            const breakdown = await contract.getCreditScoreBreakdown(userAddress);
+            displayScoreBreakdown({
+                paymentHistoryScore: breakdown[0].toString(),
+                repaymentConsistencyScore: breakdown[1].toString(),
+                loanActivityScore: breakdown[2].toString(),
+                collateralScore: breakdown[3].toString(),
+                oracleScore: breakdown[4].toString(),
+                totalScore: breakdown[5].toString()
+            });
+
+            const loans = await contract.getUserLoans(userAddress);
+            displayUserLoans(loans); // Standard user display
+
+            try {
+                const history = await contract.getFinancialHistory(userAddress);
+                displayFinancialHistory(history);
+            } catch (hErr) {
+                console.error("History Error:", hErr);
+                document.getElementById('financialHistory').innerHTML = '<p>No history found.</p>';
+            }
+            
+            // Load staking data
+            loadStakingData();
+
+        } else {
+            if (registerBtn) registerBtn.style.display = 'flex';
+            document.getElementById('creditScore').textContent = '-';
+            document.getElementById('scoreDescription').textContent = 'Register first';
+        }
+
+    } catch (error) {
+        console.error("Error loading data:", error);
     }
+}
+
+// ========== NEW: FETCH ALL SYSTEM LOANS (ADMIN ONLY) ==========
+async function loadAllSystemLoans() {
+    const container = document.getElementById('loansList');
+    if (!container) return;
+    
+    container.innerHTML = '<p class="loading-text">Scanning entire blockchain for loan records...</p>';
     
     try {
-        console.log("Loading user data for:", userAddress);
+        // 1. Find all LoanCreated events to identify every borrower
+        const filter = contract.filters.LoanCreated();
+        const events = await contract.queryFilter(filter);
         
-        // Check if user exists on blockchain
-        let exists = false;
-        try {
-            exists = await contract.userExists(userAddress);
-            console.log("User exists:", exists);
-        } catch (e) {
-            console.error("Error checking userExists:", e);
+        if (events.length === 0) {
+            container.innerHTML = '<p>No loans found in the system.</p>';
             return;
         }
         
-        if (exists) {
-            console.log("User is registered, loading data...");
-            // Load from blockchain
+        // 2. Get unique borrowers
+        const borrowerAddresses = [...new Set(events.map(e => e.args.borrower))];
+        
+        let allLoans = [];
+        
+        // 3. Fetch up-to-date loan details for each borrower
+        for (const borrower of borrowerAddresses) {
             try {
-                console.log("Calling getCreditScore...");
-                const score = await contract.getCreditScore(userAddress);
-                console.log("Score result:", score, "type:", typeof score);
-                const scoreNum = typeof score === 'bigint' ? Number(score) : parseInt(score.toString());
-                console.log("Parsed score:", scoreNum);
-                document.getElementById('creditScore').textContent = scoreNum;
-                document.getElementById('scoreDescription').textContent = getScoreDescription(scoreNum);
-                if (document.getElementById('refreshScore')) {
-                    document.getElementById('refreshScore').style.display = 'inline-block';
-                }
-            } catch (e) {
-                console.error("Error loading credit score:", e);
-                document.getElementById('creditScore').textContent = '600';
-                document.getElementById('scoreDescription').textContent = 'Default Score';
-            }
-            
-            // Load user info first to get status and last updated
-            try {
-                console.log("Calling getUserInfo...");
-                const userInfo = await contract.getUserInfo(userAddress);
-                console.log("User info result:", userInfo);
-                
-                // Update status and last updated
-                document.getElementById('scoreStatus').textContent = userInfo.isActive ? 'Active' : 'Inactive';
-                const timestamp = userInfo.lastUpdated ? (typeof userInfo.lastUpdated === 'bigint' ? Number(userInfo.lastUpdated) * 1000 : userInfo.lastUpdated * 1000) : Date.now();
-                document.getElementById('lastUpdated').textContent = new Date(timestamp).toLocaleDateString();
-                
-                // Update quick stats
-                document.getElementById('totalLoans').textContent = userInfo.totalLoans.toString();
-                document.getElementById('onTimeLoans').textContent = (parseInt(userInfo.totalLoans.toString()) - parseInt(userInfo.defaults.toString())).toString();
-                document.getElementById('defaultCount').textContent = userInfo.defaults.toString();
-                
-                displayUserProfile({
-                    name: userInfo.name,
-                    totalLoans: userInfo.totalLoans.toString(),
-                    totalRepayments: userInfo.totalRepayments.toString(),
-                    defaults: userInfo.defaults.toString(),
-                    isActive: userInfo.isActive,
-                    lastUpdated: timestamp
+                const userLoans = await contract.getUserLoans(borrower);
+                // Add borrower info to each loan object for display
+                userLoans.forEach(loan => {
+                    // Clone the loan object or create a new structure
+                    allLoans.push({
+                        loanId: loan.loanId,
+                        borrower: borrower,
+                        principal: loan.principal,
+                        interestRate: loan.interestRate,
+                        issueDate: loan.issueDate,
+                        dueDate: loan.dueDate,
+                        repaidAmount: loan.repaidAmount,
+                        isRepaid: loan.isRepaid,
+                        isDefaulted: loan.isDefaulted
+                    });
                 });
             } catch (e) {
-                console.error("Error loading user info:", e);
-                document.getElementById('userProfile').innerHTML = '<p>Unable to load profile</p>';
+                console.error("Error fetching loans for", borrower);
             }
-            
-            // Load breakdown
-            try {
-                console.log("Calling getCreditScoreBreakdown...");
-                const breakdown = await contract.getCreditScoreBreakdown(userAddress);
-                console.log("Breakdown result:", breakdown);
-                displayScoreBreakdown({
-                    paymentHistoryScore: breakdown[0].toString(),
-                    repaymentConsistencyScore: breakdown[1].toString(),
-                    loanActivityScore: breakdown[2].toString(),
-                    totalScore: breakdown[3].toString()
-                });
-            } catch (e) {
-                console.error("Error loading breakdown:", e);
-                document.getElementById('scoreBreakdown').innerHTML = '<p>Unable to load breakdown</p>';
-            }
-            
-            // Load loans
-            try {
-                console.log("Calling getUserLoans...");
-                const loans = await contract.getUserLoans(userAddress);
-                console.log("Loans result:", loans);
-                displayUserLoans(loans);
-            } catch (e) {
-                console.error("Error loading loans:", e);
-                document.getElementById('loansList').innerHTML = '<p>Unable to load loans</p>';
-            }
-            
-            // Load history
-            try {
-                console.log("Calling getFinancialHistory...");
-                const history = await contract.getFinancialHistory(userAddress);
-                console.log("History result:", history);
-                displayFinancialHistory(history);
-            } catch (e) {
-                console.error("Error loading history:", e);
-                document.getElementById('financialHistory').innerHTML = '<p>Unable to load history</p>';
-            }
-            
-            // Load admin dashboard if admin
-            if (isAdmin()) {
-                console.log("User is admin, loading admin dashboard...");
-                loadAdminDashboard();
-                loadAdminRequests();
-            }
-        } else {
-            console.log("User does not exist on blockchain");
-            // User not registered yet
-            document.getElementById('creditScore').textContent = '-';
-            document.getElementById('scoreDescription').textContent = 'Register first to see your credit score';
-            document.getElementById('scoreBreakdown').innerHTML = '<p>Register to view breakdown</p>';
-            document.getElementById('userProfile').innerHTML = '<p>Register to view profile</p>';
-            document.getElementById('financialHistory').innerHTML = '<p>Register to view history</p>';
-            document.getElementById('loansList').innerHTML = '<p>Register to view loans</p>';
         }
         
+        // 4. Sort by Loan ID
+        allLoans.sort((a, b) => Number(b.loanId) - Number(a.loanId));
+        
+        // 5. Display
+        let html = '';
+        allLoans.forEach((loan) => {
+            const dueDate = new Date(Number(loan.dueDate) * 1000);
+            let statusClass = 'status-active';
+            let statusText = 'Active';
+            
+            if (loan.isRepaid) {
+                statusClass = 'status-repaid';
+                statusText = 'Closed (Repaid)';
+            } else if (loan.isDefaulted) {
+                statusClass = 'status-defaulted';
+                statusText = 'Defaulted';
+            }
+            
+            html += `
+                <div class="loan-item" style="border-left: 4px solid #6366f1;">
+                    <div style="display:flex; justify-content:space-between;">
+                        <h4>Loan #${loan.loanId}</h4>
+                        <small style="color:#aaa;">Borrower: ${formatAddress(loan.borrower)}</small>
+                    </div>
+                    <p><strong>Principal:</strong> ${loan.principal} Wei</p>
+                    <p><strong>Interest:</strong> ${loan.interestRate}%</p>
+                    <p><strong>Due Date:</strong> ${dueDate.toLocaleDateString()}</p>
+                    <p><strong>Repaid:</strong> ${loan.repaidAmount} Wei</p>
+                    <span class="loan-status ${statusClass}">${statusText}</span>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+        
     } catch (error) {
-        console.error("Error loading user data:", error);
-        document.getElementById('creditScore').textContent = '-';
-        document.getElementById('scoreDescription').textContent = 'Error loading data';
+        console.error("System Loans Error:", error);
+        container.innerHTML = '<p>Error loading system loans.</p>';
     }
 }
 
-// Get credit score description
+async function loadAdminHistory() {
+    const container = document.getElementById('financialHistory');
+    if (!container) return;
+    container.innerHTML = '<p class="loading-text">Scanning blockchain for approved loans...</p>';
+
+    try {
+        const filter = contract.filters.LoanCreated();
+        const events = await contract.queryFilter(filter); 
+        if (events.length === 0) {
+            container.innerHTML = '<p>No admin activity found.</p>';
+            return;
+        }
+        events.sort((a, b) => b.blockNumber - a.blockNumber);
+
+        let html = '';
+        for (const event of events) {
+            const block = await event.getBlock();
+            const date = new Date(block.timestamp * 1000);
+            const amount = ethers.formatEther(event.args.principal);
+            const borrower = formatAddress(event.args.borrower);
+            const loanId = event.args.loanId.toString();
+
+            html += `
+                <div class="history-item" style="border-left: 4px solid #ff6b6b;">
+                    <h4>Loan Approved & Created</h4>
+                    <span class="activity-type" style="background:#ff6b6b;">Admin Action</span>
+                    <p class="activity-amount">${amount} ETH</p>
+                    <p><small>Created Loan #${loanId} for ${borrower}</small></p>
+                    <p><small>📅 ${date.toLocaleString()}</small></p>
+                </div>
+            `;
+        }
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = '<p>Error loading admin history.</p>';
+    }
+}
+
+// ========== DISPLAY FUNCTIONS ==========
+
 function getScoreDescription(score) {
     if (score >= 750) return "Excellent Credit Score! ✅";
     if (score >= 700) return "Good Credit Score";
@@ -324,117 +435,72 @@ function getScoreDescription(score) {
     return "Very Poor Credit Score";
 }
 
-// Display Score Breakdown
 function displayScoreBreakdown(data) {
     const container = document.getElementById('scoreBreakdown');
-    
-    if (data.error) {
-        container.innerHTML = '<p>Error loading breakdown</p>';
-        return;
-    }
-    
     const html = `
-        <div class="breakdown-item">
-            <h4>Payment History (35%)</h4>
-            <p>${data.paymentHistoryScore}</p>
-        </div>
-        <div class="breakdown-item">
-            <h4>Repayment Consistency (25%)</h4>
-            <p>${data.repaymentConsistencyScore}</p>
-        </div>
-        <div class="breakdown-item">
-            <h4>Loan Activity (20%)</h4>
-            <p>${data.loanActivityScore}</p>
-        </div>
-        <div class="breakdown-item">
-            <h4>Total Score</h4>
-            <p>${data.totalScore}</p>
-        </div>
+        <div class="breakdown-item"><h4>Payment History (35%)</h4><p>${data.paymentHistoryScore}</p></div>
+        <div class="breakdown-item"><h4>Repayment Consistency (25%)</h4><p>${data.repaymentConsistencyScore}</p></div>
+        <div class="breakdown-item"><h4>Loan Activity (20%)</h4><p>${data.loanActivityScore}</p></div>
+        <div class="breakdown-item"><h4>Collateral Score</h4><p>${data.collateralScore}</p></div>
+        <div class="breakdown-item"><h4>Oracle Score</h4><p>${data.oracleScore}</p></div>
+        <div class="breakdown-item"><h4>Total Score (Max 900)</h4><p>${data.totalScore}</p></div>
     `;
-    
     container.innerHTML = html;
 }
 
-// Display User Profile
 function displayUserProfile(profile) {
     const container = document.getElementById('userProfile');
-    
-    if (profile.error) {
-        container.innerHTML = '<p>User profile not found. Please register first.</p>';
-        return;
-    }
-    
     const html = `
-        <div class="profile-item">
-            <label>Name</label>
-            <strong>${profile.name || 'Not set'}</strong>
-        </div>
-        <div class="profile-item">
-            <label>Total Loans</label>
-            <strong>${profile.totalLoans}</strong>
-        </div>
-        <div class="profile-item">
-            <label>Total Repayments</label>
-            <strong>${profile.totalRepayments} Wei</strong>
-        </div>
-        <div class="profile-item">
-            <label>Defaults</label>
-            <strong>${profile.defaults}</strong>
-        </div>
-        <div class="profile-item">
-            <label>Last Updated</label>
-            <strong>${new Date(profile.lastUpdated).toLocaleDateString()}</strong>
-        </div>
-        <div class="profile-item">
-            <label>Status</label>
-            <strong>${profile.isActive ? 'Active' : 'Inactive'}</strong>
-        </div>
+        <div class="profile-item"><label>Name</label><strong>${profile.name}</strong></div>
+        <div class="profile-item"><label>Total Loans</label><strong>${profile.totalLoans}</strong></div>
+        <div class="profile-item"><label>Total Repayments</label><strong>${profile.totalRepayments} Wei</strong></div>
+        <div class="profile-item"><label>Defaults</label><strong>${profile.defaults}</strong></div>
+        <div class="profile-item"><label>Status</label><strong>${profile.isActive ? 'Active' : 'Inactive'}</strong></div>
     `;
-    
     container.innerHTML = html;
 }
 
-// Display Financial History
 function displayFinancialHistory(history) {
     const container = document.getElementById('financialHistory');
-    
     if (!history || history.length === 0) {
         container.innerHTML = '<p>No financial history available</p>';
         return;
     }
     
     let html = '';
-    history.forEach((activity, index) => {
-        const date = new Date(activity.timestamp);
+    for (let i = history.length - 1; i >= 0; i--) {
+        const item = history[i];
+        const type = item.activityType || item[0];
+        const amount = item.amount || item[1];
+        const desc = item.description || item[2];
+        const time = item.timestamp || item[3];
+        const timeNum = typeof time === 'bigint' ? Number(time) : Number(time);
+        const date = new Date(timeNum * 1000);
+        
         html += `
             <div class="history-item">
-                <h4>${activity.activityType}</h4>
-                <span class="activity-type">${activity.activityType}</span>
-                <p class="activity-amount">${activity.amount} Wei</p>
-                <p><small>${activity.description}</small></p>
+                <h4>${type}</h4>
+                <span class="activity-type">${type}</span>
+                <p class="activity-amount">${amount.toString()} Wei</p>
+                <p><small>${desc}</small></p>
                 <p><small>📅 ${date.toLocaleString()}</small></p>
             </div>
         `;
-    });
-    
+    }
     container.innerHTML = html;
 }
 
-// Display User Loans
 function displayUserLoans(loans) {
     const container = document.getElementById('loansList');
-    
     if (!loans || loans.length === 0) {
         container.innerHTML = '<p>No loans available</p>';
         return;
     }
-    
     let html = '';
     loans.forEach((loan) => {
-        const issueDate = typeof loan.issueDate === 'bigint' ? new Date(Number(loan.issueDate) * 1000) : new Date(loan.issueDate * 1000);
-        const dueDate = typeof loan.dueDate === 'bigint' ? new Date(Number(loan.dueDate) * 1000) : new Date(loan.dueDate * 1000);
-        let statusClass = 'status-pending';
-        let statusText = 'Pending';
+        const dueDate = new Date(Number(loan.dueDate) * 1000);
+        let statusClass = 'status-active';
+        let statusText = 'Active';
         
         if (loan.isRepaid) {
             statusClass = 'status-repaid';
@@ -444,75 +510,176 @@ function displayUserLoans(loans) {
             statusText = 'Defaulted';
         }
         
+        // Calculate remaining balance
+        const totalAmount = loan.totalAmountToRepay || 0n;
+        const repaidAmount = loan.repaidAmount || 0n;
+        const remainingBalance = totalAmount - repaidAmount;
+        
+        const principalEth = ethers.formatEther(loan.principal.toString());
+        const totalEth = ethers.formatEther(totalAmount.toString());
+        const repaidEth = ethers.formatEther(repaidAmount.toString());
+        const remainingEth = ethers.formatEther(remainingBalance.toString());
+        
         html += `
             <div class="loan-item">
                 <h4>Loan #${loan.loanId}</h4>
-                <p><strong>Principal:</strong> ${loan.principal} Wei</p>
+                <p><strong>Principal:</strong> ${principalEth} ETH</p>
                 <p><strong>Interest Rate:</strong> ${loan.interestRate}%</p>
-                <p><strong>Issue Date:</strong> ${issueDate.toLocaleDateString()}</p>
+                <p><strong>Total Amount Owed:</strong> ${totalEth} ETH</p>
+                <p><strong>Repaid:</strong> ${repaidEth} ETH</p>
+                <p><strong>Remaining Balance:</strong> ${remainingEth} ETH</p>
                 <p><strong>Due Date:</strong> ${dueDate.toLocaleDateString()}</p>
-                <p><strong>Repaid Amount:</strong> ${loan.repaidAmount} Wei</p>
-                <p><strong>Remaining:</strong> ${Math.max(0, parseInt(loan.principal) - parseInt(loan.repaidAmount))} Wei</p>
                 <span class="loan-status ${statusClass}">${statusText}</span>
             </div>
         `;
     });
-    
     container.innerHTML = html;
 }
 
-// Load Admin Dashboard with all users and their loans
+// ========== ADMIN DASHBOARD ==========
 async function loadAdminDashboard() {
     const adminDashboard = document.getElementById('adminDashboard');
     if (!adminDashboard) return;
-    
     try {
-        let loanCount = 0;
-        
-        try {
-            const countBig = await contract.getLoanCount?.();
-            if (countBig) {
-                loanCount = parseInt(countBig.toString());
-            }
-        } catch (e) {
-            console.log("Loan count not available");
-        }
-        
-        adminDashboard.innerHTML = `<div class="card"><h3>📊 Admin Panel</h3><p><strong>Total Loans:</strong> ${loanCount}</p></div>`;
+        let countBig = "0";
+        try { countBig = await contract.getLoanCount(); } catch(e) {}
+        adminDashboard.innerHTML = `<div class="card"><h3>📊 Admin Panel</h3><p><strong>Total Loans in System:</strong> ${countBig}</p></div>`;
     } catch (error) {
-        console.error("Error loading admin dashboard:", error);
-        adminDashboard.innerHTML = '<div class="card"><h3>📊 Admin Panel</h3><p>Ready</p></div>';
+        console.error("Admin Dash Error:", error);
     }
 }
 
-// Load and display pending loan requests for admin approval
+// ========== USER REGISTRY (ADMIN) ==========
+async function loadUserRegistry() {
+    const registryDiv = document.getElementById('userRegistry');
+    if (!registryDiv || !contract) return;
+    
+    try {
+        registryDiv.innerHTML = '<p class="loading-text">Fetching all registered users...</p>';
+        
+        const userAddresses = await contract.getAllUsers();
+        
+        if (userAddresses.length === 0) {
+            registryDiv.innerHTML = '<p style="color:#aaa;">No users registered yet.</p>';
+            return;
+        }
+        
+        let html = '<div style="display: grid; gap: 0.75rem;">';
+        
+        for (const addr of userAddresses) {
+            try {
+                const userInfo = await contract.getUserInfo(addr);
+                const score = Number(userInfo.creditScore);
+                
+                let scoreColor = '#4ade80'; // green
+                if (score < 550) scoreColor = '#ff6b6b'; // red
+                else if (score < 650) scoreColor = '#ffa500'; // orange
+                else if (score < 700) scoreColor = '#ffeb3b'; // yellow
+                
+                html += `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 8px; padding: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 0.25rem 0; color: #fff;">${userInfo.name}</h4>
+                            <p style="margin: 0; color: #aaa; font-size: 0.85rem;">
+                                <strong>Score:</strong> <span style="color: ${scoreColor};">${score}</span>
+                            </p>
+                            <p style="margin: 0.25rem 0 0 0; color: #888; font-size: 0.8rem; font-family: monospace;">
+                                ${addr}
+                            </p>
+                        </div>
+                        <button class="btn btn-primary" onclick="copyAddress('${addr}')" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+                            <i class="fas fa-copy"></i> Copy
+                        </button>
+                    </div>
+                `;
+            } catch (err) {
+                console.error("Error fetching user info for", addr, err);
+            }
+        }
+        
+        html += '</div>';
+        registryDiv.innerHTML = html;
+        
+    } catch (error) {
+        console.error("User Registry Error:", error);
+        registryDiv.innerHTML = '<p style="color:#ff6b6b;">Error loading user registry.</p>';
+    }
+}
+
+// Copy address to clipboard
+// REPLACE the existing copyAddress function with this robust version:
+
+async function copyAddress(address) {
+    // Find the button element (handle clicks on the icon or the button itself)
+    const btn = event.target.closest('button');
+    
+    try {
+        // Method 1: Modern Async API
+        await navigator.clipboard.writeText(address);
+        showCopySuccess(btn);
+    } catch (err) {
+        // Method 2: Fallback for older browsers or restricted contexts
+        try {
+            const textArea = document.createElement("textarea");
+            textArea.value = address;
+            
+            // Ensure textarea is not visible but part of DOM
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+            
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            
+            if (successful) {
+                showCopySuccess(btn);
+            } else {
+                throw new Error("Fallback failed");
+            }
+        } catch (fallbackErr) {
+            // Method 3: Last resort - Show prompt
+            console.error('Failed to copy:', fallbackErr);
+            prompt("Browser blocked copy. Please Ctrl+C manually:", address);
+        }
+    }
+}
+
+// Helper to update button UI
+function showCopySuccess(btn) {
+    if (!btn) return;
+    
+    const originalHTML = btn.innerHTML;
+    const originalColor = btn.style.backgroundColor;
+    
+    btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+    btn.style.backgroundColor = '#4ade80'; // Green
+    btn.style.borderColor = '#4ade80';
+    
+    setTimeout(() => {
+        btn.innerHTML = originalHTML;
+        btn.style.backgroundColor = originalColor;
+        btn.style.borderColor = '';
+    }, 2000);
+}
 async function loadAdminRequests() {
     const pendingRequestsDiv = document.getElementById('pendingRequests');
     if (!pendingRequestsDiv || !contract) return;
-    
     try {
-        pendingRequestsDiv.innerHTML = '<p class="loading-text">Loading pending requests...</p>';
-        
-        // Query blockchain for LoanRequested events
+        pendingRequestsDiv.innerHTML = '<p class="loading-text">Scanning for requests...</p>';
         const filter = contract.filters.LoanRequested();
         const events = await contract.queryFilter(filter);
-        
         if (events.length === 0) {
             pendingRequestsDiv.innerHTML = '<p class="loading-text">No loan requests found.</p>';
             return;
         }
-        
-        // Extract unique borrower addresses from events
         const borrowerAddresses = [...new Set(events.map(e => e.args.borrower))];
-        
         let allRequests = [];
-        
-        // Fetch loan requests for each borrower
         for (const borrowerAddr of borrowerAddresses) {
             try {
                 const requests = await contract.getLoanRequests(borrowerAddr);
-                
-                // Filter for active and unapproved requests
                 requests.forEach((req, index) => {
                     if (req.isActive && !req.isApproved) {
                         allRequests.push({
@@ -526,133 +693,100 @@ async function loadAdminRequests() {
                         });
                     }
                 });
-            } catch (err) {
-                console.error(`Error fetching requests for ${borrowerAddr}:`, err);
-            }
+            } catch (err) {}
         }
-        
-        // Display requests
         if (allRequests.length === 0) {
-            pendingRequestsDiv.innerHTML = '<p class="loading-text">No pending requests at this time.</p>';
+            pendingRequestsDiv.innerHTML = '<p class="loading-text">No pending requests.</p>';
             return;
         }
-        
         let html = '';
         allRequests.forEach(req => {
             html += `
                 <div class="loan-card" style="margin-bottom: 1rem; padding: 1rem; border: 1px solid #444; border-radius: 8px; background: rgba(255,255,255,0.02);">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="flex: 1;">
                             <h4 style="margin: 0 0 0.5rem 0; color: #fff;">Request #${req.requestId}</h4>
-                            <p style="margin: 0.25rem 0; color: #aaa; font-size: 0.9rem;">
-                                <strong>Borrower:</strong> ${formatAddress(req.borrower)}
-                            </p>
-                            <p style="margin: 0.25rem 0; color: #aaa; font-size: 0.9rem;">
-                                <strong>Amount:</strong> ${req.amount} ETH
-                            </p>
-                            <p style="margin: 0.25rem 0; color: #aaa; font-size: 0.9rem;">
-                                <strong>Interest Rate:</strong> ${req.interestRate}%
-                            </p>
-                            <p style="margin: 0.25rem 0; color: #aaa; font-size: 0.9rem;">
-                                <strong>Duration:</strong> ${req.durationDays} days
-                            </p>
-                            <p style="margin: 0.5rem 0 0 0; color: #ccc; font-style: italic;">
-                                "${req.reason}"
-                            </p>
+                            <p style="margin:0; color: #aaa;"><strong>Borrower:</strong> ${formatAddress(req.borrower)}</p>
+                            <p style="margin:0; color: #aaa;"><strong>Amount:</strong> ${req.amount} ETH</p>
+                            <p style="margin:0; color: #aaa;"><strong>Reason:</strong> "${req.reason}"</p>
                         </div>
-                        <button 
-                            class="btn btn-success" 
-                            onclick="approveRequest('${req.borrower}', ${req.requestIndex})"
-                            style="margin-left: 1rem; white-space: nowrap;">
+                        <button class="btn btn-success" onclick="approveRequest('${req.borrower}', ${req.requestIndex})">
                             <i class="fas fa-check"></i> Approve
                         </button>
                     </div>
                 </div>
             `;
         });
-        
         pendingRequestsDiv.innerHTML = html;
-        
     } catch (error) {
-        console.error("Error loading admin requests:", error);
         pendingRequestsDiv.innerHTML = '<p class="loading-text">Error loading requests.</p>';
     }
 }
 
-// Approve a loan request (called by button click)
 async function approveRequest(borrowerAddress, requestIndex) {
-    if (!isAdmin()) {
-        alert("Admin only function");
-        return;
-    }
-    
-    if (!contract) {
-        alert("Contract not initialized");
-        return;
-    }
-    
+    if (!isAdmin() || !contract) return;
+    if (!confirm(`Approve loan for ${formatAddress(borrowerAddress)}?`)) return;
     try {
-        const confirmed = confirm(`Approve loan request from ${formatAddress(borrowerAddress)}?`);
-        if (!confirmed) return;
-        
-        // Show loading state
-        const pendingRequestsDiv = document.getElementById('pendingRequests');
-        if (pendingRequestsDiv) {
-            const originalHTML = pendingRequestsDiv.innerHTML;
-            pendingRequestsDiv.innerHTML = '<p class="loading-text">Approving loan request...</p>';
-        }
-        
+        document.getElementById('pendingRequests').innerHTML = '<p class="loading-text">Approving...</p>';
         const tx = await contract.approveLoan(borrowerAddress, requestIndex);
-        const receipt = await tx.wait();
-        
-        alert(`✅ Loan approved! TX: ${receipt.hash}`);
-        
-        // Reload the requests list
-        await loadAdminRequests();
-        
+        await tx.wait();
+        alert(`✅ Loan approved!`);
+        loadAdminRequests();
+        loadAdminHistory();
+        loadAllSystemLoans(); 
     } catch (error) {
-        console.error("Approval error:", error);
         alert(`Error: ${error.message || error}`);
-        await loadAdminRequests(); // Reload to restore state
+        loadAdminRequests();
     }
 }
 
-// Show Status Message (defined in app.js)
-// This function is overridden in app.js to target active tab's status message
-
-// Format address
 function formatAddress(address) {
     return address.substring(0, 6) + '...' + address.substring(38);
 }
 
-// Initialize on page load
-window.addEventListener('DOMContentLoaded', async () => {
-    // Initialize Web3
-    const web3Ready = await initWeb3();
+// ========== STAKING DISPLAY FUNCTIONS ==========
+async function loadStakingData() {
+    if (!userAddress || !contract) return;
     
-    // Setup tab switching
+    const stakingInfo = document.getElementById('stakingInfo');
+    if (!stakingInfo) return;
+    
+    try {
+        const stakedAmount = await contract.stakes(userAddress);
+        const stakedEth = ethers.formatEther(stakedAmount.toString());
+        
+        stakingInfo.innerHTML = `
+            <div class="card">
+                <h3>💰 Your Staking Balance</h3>
+                <p class="activity-amount" style="font-size: 2rem; color: #4ade80;">${stakedEth} ETH</p>
+                <p style="color: #aaa;">
+                    ${stakedAmount >= ethers.parseEther("0.01") 
+                        ? "✅ Earning +50 credit score bonus!" 
+                        : "⚠️ Stake at least 0.01 ETH to earn +50 credit score bonus"}
+                </p>
+            </div>
+        `;
+    } catch (error) {
+        console.error("Error loading staking data:", error);
+        stakingInfo.innerHTML = '<p>Error loading staking data</p>';
+    }
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+    await initWeb3();
     document.querySelectorAll('.tab-button').forEach(button => {
         button.addEventListener('click', () => {
-            const tabName = button.getAttribute('data-tab');
-            switchTab(tabName);
+            switchTab(button.getAttribute('data-tab'));
         });
     });
-    
-    // Setup wallet connection
     document.getElementById('connectWallet').addEventListener('click', connectWallet);
 });
 
-// Switch Tab
 function switchTab(tabName) {
-    // Remove active class from all tabs
-    document.querySelectorAll('.tab-content').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    document.querySelectorAll('.tab-button').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    
-    // Add active class to selected tab
-    document.getElementById(tabName).classList.add('active');
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    const content = document.getElementById(tabName);
+    if (content) content.classList.add('active');
+    const btn = document.querySelector(`[data-tab="${tabName}"]`);
+    if (btn) btn.classList.add('active');
 }

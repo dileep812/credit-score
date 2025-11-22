@@ -1100,14 +1100,12 @@ body::before {
 }
 
 /* Admin form enhancements */
-#createLoanForm .form-group input,
 #recordDefaultForm .form-group input,
 #checkScoreForm .form-group input {
     background: rgba(99, 102, 241, 0.05);
     border-color: rgba(99, 102, 241, 0.2);
 }
 
-#createLoanForm .form-group input:focus,
 #recordDefaultForm .form-group input:focus,
 #checkScoreForm .form-group input:focus {
     background: rgba(99, 102, 241, 0.1);

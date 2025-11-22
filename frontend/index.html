@@ -46,6 +46,9 @@
                 <button class="tab-button" data-tab="requestLoan">
                     <i class="fas fa-hand-holding-usd"></i> Request Loan
                 </button>
+                <button class="tab-button" data-tab="collateral">
+                    <i class="fas fa-lock"></i> Collateral
+                </button>
                 <button class="tab-button" data-tab="admin" style="display:none; background-color: #ff6b6b;">
                     <i class="fas fa-crown"></i> Admin Panel
                 </button>
@@ -170,11 +173,11 @@
                         <form id="repaymentForm">
                             <div class="form-group">
                                 <label for="loanId"><i class="fas fa-barcode"></i> Loan ID:</label>
-                                <input type="number" id="loanId" placeholder="Enter loan ID" required>
+                                <input type="number" id="loanId" placeholder="Enter loan ID" min="1" step="1" required>
                             </div>
                             <div class="form-group">
                                 <label for="repaymentAmount"><i class="fas fa-coins"></i> Amount (ETH):</label>
-                                <input type="number" id="repaymentAmount" placeholder="Enter amount" step="0.01" required>
+                                <input type="number" id="repaymentAmount" placeholder="Enter amount" min="0" step="any" required>
                             </div>
                             <button type="submit" class="btn btn-primary btn-block">
                                 <i class="fas fa-arrow-up"></i> Submit Repayment
@@ -192,15 +195,15 @@
                     <form id="requestLoanForm">
                         <div class="form-group">
                             <label for="requestAmount"><i class="fas fa-coins"></i> Loan Amount (ETH):</label>
-                            <input type="number" id="requestAmount" placeholder="e.g., 1.5" step="0.01" required>
+                            <input type="number" id="requestAmount" placeholder="e.g., 1.5" min="0" step="any" required>
                         </div>
                         <div class="form-group">
                             <label for="requestInterestRate"><i class="fas fa-percent"></i> Interest Rate (%):</label>
-                            <input type="number" id="requestInterestRate" placeholder="e.g., 5" step="0.1" required>
+                            <input type="number" id="requestInterestRate" placeholder="e.g., 5" min="0" step="any" required>
                         </div>
                         <div class="form-group">
                             <label for="requestDurationDays"><i class="fas fa-calendar"></i> Duration (Days):</label>
-                            <input type="number" id="requestDurationDays" placeholder="e.g., 30" required>
+                            <input type="number" id="requestDurationDays" placeholder="e.g., 30" min="1" step="1" required>
                         </div>
                         <div class="form-group">
                             <label for="requestReason"><i class="fas fa-comment-alt"></i> Reason for Loan:</label>
@@ -214,9 +217,62 @@
                 </div>
             </div>
 
+            <!-- Collateral Tab (Staking) -->
+            <div id="collateral" class="tab-content">
+                <div class="card card-large">
+                    <h2><i class="fas fa-lock"></i> Collateral Staking</h2>
+                    <p style="color: #aaa; margin-bottom: 1.5rem;">
+                        Stake ETH as collateral to boost your credit score. 
+                        <strong>Staking ≥ 0.01 ETH adds +50 points!</strong>
+                    </p>
+                    <div id="stakingInfo">
+                        <p class="loading-text">Loading staking data...</p>
+                    </div>
+                </div>
+
+                <div class="card card-form">
+                    <h3><i class="fas fa-arrow-down"></i> Stake ETH</h3>
+                    <form id="stakeForm">
+                        <div class="form-group">
+                            <label for="stakeAmount"><i class="fas fa-coins"></i> Amount to Stake (ETH):</label>
+                            <input type="number" id="stakeAmount" placeholder="e.g., 0.05" min="0" step="any" required>
+                        </div>
+                        <button type="submit" class="btn btn-success btn-block">
+                            <i class="fas fa-lock"></i> Stake ETH
+                        </button>
+                    </form>
+                    <div id="stakeStatus" class="status-message"></div>
+                </div>
+
+                <div class="card card-form">
+                    <h3><i class="fas fa-arrow-up"></i> Unstake ETH</h3>
+                    <p style="color: #ff6b6b; font-size: 0.9rem; margin-bottom: 1rem;">
+                        ⚠️ You can only unstake if you have NO active loans.
+                    </p>
+                    <form id="unstakeForm">
+                        <div class="form-group">
+                            <label for="unstakeAmount"><i class="fas fa-coins"></i> Amount to Unstake (ETH):</label>
+                            <input type="number" id="unstakeAmount" placeholder="e.g., 0.05" min="0" step="any" required>
+                        </div>
+                        <button type="submit" class="btn btn-danger btn-block">
+                            <i class="fas fa-unlock"></i> Unstake ETH
+                        </button>
+                    </form>
+                    <div id="unstakeStatus" class="status-message"></div>
+                </div>
+            </div>
+
             <!-- Admin Panel Tab -->
             <div id="admin" class="tab-content">
                 <div class="admin-grid">
+                    <!-- Registered Users Section -->
+                    <div class="card card-large">
+                        <h2><i class="fas fa-users"></i> Registered Users</h2>
+                        <div id="userRegistry" class="loans-container" style="max-height: 400px; overflow-y: auto;">
+                            <p class="loading-text">Loading user registry...</p>
+                        </div>
+                    </div>
+                    
                     <!-- Pending Loan Requests Section -->
                     <div class="card card-large">
                         <h2><i class="fas fa-inbox"></i> Pending Loan Requests</h2>
@@ -226,37 +282,11 @@
                     </div>
 
                     <div class="card card-form">
-                        <h2><i class="fas fa-plus-circle"></i> Create Loan for User</h2>
-                        <form id="createLoanForm">
-                            <div class="form-group">
-                                <label for="borrowerAddress"><i class="fas fa-wallet"></i> User Address:</label>
-                                <input type="text" id="borrowerAddress" placeholder="0x..." required>
-                            </div>
-                            <div class="form-group">
-                                <label for="principal"><i class="fas fa-coins"></i> Loan Amount (ETH):</label>
-                                <input type="number" id="principal" placeholder="e.g., 1.5" step="0.01" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="interestRate"><i class="fas fa-percent"></i> Interest Rate (%):</label>
-                                <input type="number" id="interestRate" placeholder="e.g., 5" step="0.1" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="durationDays"><i class="fas fa-calendar"></i> Duration (Days):</label>
-                                <input type="number" id="durationDays" placeholder="e.g., 30" required>
-                            </div>
-                            <button type="submit" class="btn btn-primary btn-block">
-                                <i class="fas fa-save"></i> Create Loan
-                            </button>
-                        </form>
-                        <div id="createLoanStatus" class="status-message"></div>
-                    </div>
-
-                    <div class="card card-form">
                         <h2><i class="fas fa-flag"></i> Record Default</h2>
                         <form id="recordDefaultForm">
                             <div class="form-group">
                                 <label for="defaultLoanId"><i class="fas fa-barcode"></i> Loan ID:</label>
-                                <input type="number" id="defaultLoanId" placeholder="Enter loan ID" required>
+                                <input type="number" id="defaultLoanId" placeholder="Enter loan ID" min="1" step="1" required>
                             </div>
                             <button type="submit" class="btn btn-danger btn-block">
                                 <i class="fas fa-exclamation-triangle"></i> Record Default
@@ -270,17 +300,35 @@
                         <form id="recordLatePaymentForm">
                             <div class="form-group">
                                 <label for="lateLoanId"><i class="fas fa-barcode"></i> Loan ID:</label>
-                                <input type="number" id="lateLoanId" placeholder="Enter loan ID" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="lateDaysOverdue"><i class="fas fa-calendar-times"></i> Days Overdue:</label>
-                                <input type="number" id="lateDaysOverdue" placeholder="e.g., 5" required>
+                                <input type="number" id="lateLoanId" placeholder="Enter loan ID" min="1" step="1" required>
                             </div>
                             <button type="submit" class="btn btn-warning btn-block">
                                 <i class="fas fa-hourglass-end"></i> Record Late Payment
                             </button>
                         </form>
                         <div id="recordLatePaymentStatus" class="status-message"></div>
+                    </div>
+
+                    <!-- Oracle External Score Update (Admin acts as oracle) -->
+                    <div class="card card-form">
+                        <h2><i class="fas fa-database"></i> Update External Score (Oracle)</h2>
+                        <p style="color:#aaa; font-size:0.85rem; margin-top:-0.25rem; margin-bottom:1rem;">
+                            Simulated oracle feed. Max external score contribution: 50 points.
+                        </p>
+                        <form id="oracleUpdateForm">
+                            <div class="form-group">
+                                <label for="oracleUserAddress"><i class="fas fa-user"></i> User Address:</label>
+                                <input type="text" id="oracleUserAddress" placeholder="0x..." required>
+                            </div>
+                            <div class="form-group">
+                                <label for="oracleScore"><i class="fas fa-star"></i> External Score (0 - 50):</label>
+                                <input type="number" id="oracleScore" placeholder="e.g., 42" min="0" max="50" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block">
+                                <i class="fas fa-upload"></i> Push Oracle Score
+                            </button>
+                        </form>
+                        <div id="oracleUpdateStatus" class="status-message"></div>
                     </div>
                 </div>
             </div>

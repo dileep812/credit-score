@@ -61,11 +61,18 @@ document.getElementById('repaymentForm').addEventListener('submit', async (e) =>
         return;
     }
     
+    // Strict validation: amount must be positive
+    if (parseFloat(amount) <= 0) {
+        showStatus("Repayment amount must be a positive value", "error");
+        return;
+    }
+    
     try {
         showStatus("Recording repayment...", "loading");
         
+        // Send ETH with the transaction using { value: ... }
         const amountInWei = ethers.parseEther(amount);
-        const tx = await contract.recordRepayment(parseInt(loanId), amountInWei);
+        const tx = await contract.recordRepayment(parseInt(loanId), { value: amountInWei });
         const receipt = await tx.wait();
         
         showStatus(`✅ Repayment recorded! TX: ${receipt.hash}`, "success");
@@ -102,6 +109,12 @@ document.getElementById('requestLoanForm').addEventListener('submit', async (e) 
     
     if (!amount || !interestRate || !durationDays || !reason) {
         showStatus("Please fill in all fields", "error");
+        return;
+    }
+    
+    // Strict validation: values must be positive
+    if (parseFloat(amount) <= 0 || parseFloat(interestRate) <= 0 || parseInt(durationDays) <= 0) {
+        showStatus("Amount, interest rate, and duration must be positive values", "error");
         return;
     }
     
@@ -161,63 +174,7 @@ window.showStatus = function(message, type) {
 // ========== ADMIN FUNCTIONS ==========
 
 function initAdminForms() {
-    // ===== 1. CREATE LOAN (Admin Only) =====
-    const createLoanForm = document.getElementById('createLoanForm');
-    if (createLoanForm) {
-        createLoanForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            if (!isAdmin()) {
-                showStatus("Admin only function", "error");
-                return;
-            }
-            
-            if (!contract) {
-                showStatus("Contract not initialized", "error");
-                return;
-            }
-            
-            const borrowerAddress = document.getElementById('borrowerAddress').value.trim();
-            const principal = document.getElementById('principal').value.trim();
-            const interestRate = document.getElementById('interestRate').value.trim();
-            const durationDays = document.getElementById('durationDays').value.trim();
-            
-            if (!borrowerAddress || !principal || !interestRate || !durationDays) {
-                showStatus("Please fill in all fields", "error");
-                return;
-            }
-            
-            if (!ethers.isAddress(borrowerAddress)) {
-                showStatus("Invalid borrower address", "error");
-                return;
-            }
-            
-            try {
-                showStatus("Creating loan on blockchain...", "loading");
-                
-                const principalInWei = ethers.parseEther(principal);
-                const tx = await contract.createLoan(
-                    borrowerAddress,
-                    principalInWei,
-                    parseInt(interestRate),
-                    parseInt(durationDays)
-                );
-                const receipt = await tx.wait();
-                
-                showStatus(`✅ Loan created! TX: ${receipt.hash}`, "success");
-                createLoanForm.reset();
-                
-                setTimeout(() => {
-                    loadUserData();
-                }, 2000);
-            } catch (error) {
-                console.error("Loan creation error:", error);
-                showStatus(`Error: ${error.message || error}`, "error");
-            }
-        });
-    }
-
-    // ===== 2. RECORD DEFAULT (Admin Only) =====
+    // ===== RECORD DEFAULT (Admin Only) =====
     const recordDefaultForm = document.getElementById('recordDefaultForm');
     if (recordDefaultForm) {
         recordDefaultForm.addEventListener('submit', async (e) => {
@@ -258,10 +215,136 @@ function initAdminForms() {
             }
         });
     }
+    
+    // ===== RECORD LATE PAYMENT (Admin Only) =====
+    const recordLatePaymentForm = document.getElementById('recordLatePaymentForm');
+    if (recordLatePaymentForm) {
+        recordLatePaymentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (!isAdmin()) {
+                showStatus("Admin only function", "error");
+                return;
+            }
+            
+            if (!contract) {
+                showStatus("Contract not initialized", "error");
+                return;
+            }
+            
+            const loanId = document.getElementById('lateLoanId').value.trim();
+            
+            if (!loanId || loanId === "0") {
+                showStatus("Please enter valid loan ID", "error");
+                return;
+            }
+            
+            try {
+                showStatus("Recording late payment on blockchain...", "loading");
+                
+                const tx = await contract.recordLatePayment(parseInt(loanId));
+                const receipt = await tx.wait();
+                
+                showStatus(`✅ Late payment recorded for Loan #${loanId}! TX: ${receipt.hash}`, "success");
+                recordLatePaymentForm.reset();
+                
+                setTimeout(() => {
+                    loadUserData();
+                }, 2000);
+            } catch (error) {
+                console.error("Late payment recording error:", error);
+                showStatus(`Error: ${error.message || error}`, "error");
+            }
+        });
+    }
 }
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     initAdminForms();
+    initCollateralForms();
+    initOracleForm();
 });
+
+// ========== USER COLLATERAL (STAKING) FORMS ==========
+function initCollateralForms() {
+    const stakeForm = document.getElementById('stakeForm');
+    if (stakeForm) {
+        stakeForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!userAddress) { showStatus('Connect wallet first', 'error'); return; }
+            if (!contract) { showStatus('Contract not initialized', 'error'); return; }
+            const amt = document.getElementById('stakeAmount').value.trim();
+            if (!amt || parseFloat(amt) <= 0) { 
+                showStatus('Stake amount must be a positive value', 'error'); 
+                return; 
+            }
+            try {
+                showStatus('Staking ETH...', 'loading');
+                const wei = ethers.parseEther(amt);
+                const tx = await contract.stake({ value: wei });
+                const receipt = await tx.wait();
+                showStatus(`✅ Staked ${amt} ETH (TX: ${receipt.hash})`, 'success');
+                stakeForm.reset();
+                setTimeout(() => { loadUserData(); loadStakingData(); }, 1500);
+            } catch (err) {
+                console.error(err);
+                showStatus(`Error: ${err.message || err}`, 'error');
+            }
+        });
+    }
+    const unstakeForm = document.getElementById('unstakeForm');
+    if (unstakeForm) {
+        unstakeForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!userAddress) { showStatus('Connect wallet first', 'error'); return; }
+            if (!contract) { showStatus('Contract not initialized', 'error'); return; }
+            const amt = document.getElementById('unstakeAmount').value.trim();
+            if (!amt || parseFloat(amt) <= 0) { 
+                showStatus('Unstake amount must be a positive value', 'error'); 
+                return; 
+            }
+            try {
+                showStatus('Unstaking ETH...', 'loading');
+                const wei = ethers.parseEther(amt);
+                const tx = await contract.unstake(wei);
+                const receipt = await tx.wait();
+                showStatus(`✅ Unstaked ${amt} ETH (TX: ${receipt.hash})`, 'success');
+                unstakeForm.reset();
+                setTimeout(() => { loadUserData(); loadStakingData(); }, 1500);
+            } catch (err) {
+                console.error(err);
+                showStatus(`Error: ${err.message || err}`, 'error');
+            }
+        });
+    }
+}
+
+// ========== ORACLE UPDATE FORM (ADMIN) ==========
+function initOracleForm() {
+    const oracleForm = document.getElementById('oracleUpdateForm');
+    if (!oracleForm) return;
+    oracleForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!isAdmin()) { showStatus('Admin only function', 'error'); return; }
+        if (!contract) { showStatus('Contract not initialized', 'error'); return; }
+        const userAddr = document.getElementById('oracleUserAddress').value.trim();
+        const scoreStr = document.getElementById('oracleScore').value.trim();
+        if (!userAddr || !ethers.isAddress(userAddr)) { showStatus('Invalid user address', 'error'); return; }
+        if (!scoreStr) { showStatus('Enter score', 'error'); return; }
+        const score = parseInt(scoreStr);
+        if (score < 0 || score > 50) { showStatus('Score must be between 0 and 50', 'error'); return; }
+        try {
+            showStatus('Updating external score...', 'loading');
+            const tx = await contract.updateExternalScore(userAddr, score);
+            const receipt = await tx.wait();
+            showStatus(`✅ External score updated (TX: ${receipt.hash})`, 'success');
+            oracleForm.reset();
+            setTimeout(() => { loadUserData(); }, 1500);
+        } catch (err) {
+            console.error(err);
+            showStatus(`Error: ${err.message || err}`, 'error');
+        }
+    });
+}
 
