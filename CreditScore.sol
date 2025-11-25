@@ -11,6 +11,7 @@ contract CreditScore {
         uint256 totalRepayments;
         uint256 defaults;
         uint256 totalRequests;
+        uint256 repaidLoansCount;
         uint256 lastUpdated;
         bool isActive;
     }
@@ -112,6 +113,7 @@ contract CreditScore {
             totalRepayments: 0,
             defaults: 0,
             totalRequests: 0,
+            repaidLoansCount: 0,
             lastUpdated: block.timestamp,
             isActive: true
         });
@@ -254,6 +256,10 @@ contract CreditScore {
         // Auto-close loan if fully repaid
         if (loan.repaidAmount == loan.totalAmountToRepay) {
             loan.isRepaid = true;
+            // Increment repaid loans count only when fully paid
+            if (registeredUsers[borrower]) {
+                users[borrower].repaidLoansCount += 1;
+            }
         }
         
         // Transfer repayment to admin
@@ -346,10 +352,10 @@ contract CreditScore {
         {
             uint256 totalLoans = user.totalLoans;
             uint256 defaults = user.defaults;
-            uint256 successfulLoans = totalLoans > defaults ? totalLoans - defaults : 0;
+            uint256 repaidLoans = user.repaidLoansCount;
 
-            // 1. Payment History (Max 350) - Growth Model
-            uint256 rawPayment = 50 + (successfulLoans * 30);
+            // 1. Payment History (Max 350) - Based on FULLY REPAID loans only
+            uint256 rawPayment = 50 + (repaidLoans * 30);
             uint256 penalty = defaults * 50;
             if (penalty > rawPayment) {
                 scores[0] = 0;
@@ -358,11 +364,11 @@ contract CreditScore {
             }
             if (scores[0] > 350) scores[0] = 350;
 
-            // 2. Consistency (Max 250)
-            scores[1] = successfulLoans * 25;
+            // 2. Consistency (Max 250) - Based on FULLY REPAID loans only
+            scores[1] = repaidLoans * 25;
             if (scores[1] > 250) scores[1] = 250;
 
-            // 3. Loan Activity (Max 200)
+            // 3. Loan Activity (Max 200) - Shows engagement (includes active loans)
             scores[2] = totalLoans * 20;
             if (scores[2] > 200) scores[2] = 200;
         }
@@ -461,9 +467,30 @@ contract CreditScore {
         return admin;
     }
     
-    function getUserInfo(address _user) public view returns (User memory) {
+    // Part 1: Basic Info
+    function getUserInfoBasic(address _user) public view returns (
+        string memory name,
+        uint256 creditScore,
+        bool isActive,
+        uint256 lastUpdated,
+        uint256 stakedAmount
+    ) {
         require(registeredUsers[_user], "User does not exist");
-        return users[_user];
+        User storage user = users[_user];
+        return (user.name, user.creditScore, user.isActive, user.lastUpdated, stakes[_user]);
+    }
+
+    // Part 2: Stats
+    function getUserInfoStats(address _user) public view returns (
+        uint256 totalLoans,
+        uint256 totalRepayments,
+        uint256 defaults,
+        uint256 totalRequests,
+        uint256 repaidLoansCount
+    ) {
+        require(registeredUsers[_user], "User does not exist");
+        User storage user = users[_user];
+        return (user.totalLoans, user.totalRepayments, user.defaults, user.totalRequests, user.repaidLoansCount);
     }
     
     function getLoanCount() public view returns (uint256) {

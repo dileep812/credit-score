@@ -20,7 +20,8 @@ const CONTRACT_ABI = [
     "function getFinancialHistory(address _user) public view returns (tuple(string activityType, uint256 amount, string description, uint256 timestamp)[])",
     "function getUserLoans(address _user) public view returns (tuple(uint256 loanId, address borrower, uint256 principal, uint256 interestRate, uint256 issueDate, uint256 dueDate, uint256 repaidAmount, uint256 totalAmountToRepay, bool isRepaid, bool isDefaulted)[])",
     "function userExists(address _user) public view returns (bool)",
-    "function getUserInfo(address _user) public view returns (tuple(string name, uint256 creditScore, uint256 totalLoans, uint256 totalRepayments, uint256 defaults, uint256 totalRequests, uint256 lastUpdated, bool isActive))",
+    "function getUserInfoBasic(address _user) public view returns (string memory name, uint256 creditScore, bool isActive, uint256 lastUpdated, uint256 stakedAmount)",
+    "function getUserInfoStats(address _user) public view returns (uint256 totalLoans, uint256 totalRepayments, uint256 defaults, uint256 totalRequests, uint256 repaidLoansCount)",
     "function getAdmin() public view returns (address)",
     "function getLoanCount() public view returns (uint256)",
     "function calculateTotalDebt(address _user) public view returns (uint256)",
@@ -97,6 +98,9 @@ async function initWeb3() {
                 if (accounts.length === 0) disconnectWallet();
                 else { userAddress = accounts[0]; updateWalletStatus(); }
             });
+            
+
+            
             return true;
         } catch (error) {
             console.error("Error initializing Web3:", error);
@@ -220,6 +224,9 @@ async function loadUserData() {
             // UI Adjustments for Admin
             const adminBtn = document.querySelector('[data-tab="admin"]');
             if (adminBtn) adminBtn.style.display = 'flex';
+            
+            const registryBtn = document.querySelector('[data-tab="registry"]');
+            if (registryBtn) registryBtn.style.display = 'flex';
 
             // Hide User-Specific Tabs
             ['dashboard', 'requestLoan', 'register', 'collateral'].forEach(t => {
@@ -288,7 +295,24 @@ async function loadUserData() {
             document.getElementById('creditScore').textContent = scoreNum;
             document.getElementById('scoreDescription').textContent = getScoreDescription(scoreNum);
 
-            const userInfo = await contract.getUserInfo(userAddress);
+            // Fetch user info using split functions
+            const basic = await contract.getUserInfoBasic(userAddress);
+            const stats = await contract.getUserInfoStats(userAddress);
+            
+            // Merge results
+            const userInfo = {
+                name: basic[0],
+                creditScore: basic[1],
+                isActive: basic[2],
+                lastUpdated: basic[3],
+                stakedAmount: basic[4],
+                totalLoans: stats[0],
+                totalRepayments: stats[1],
+                defaults: stats[2],
+                totalRequests: stats[3],
+                repaidLoansCount: stats[4]
+            };
+            
             const timestamp = Number(userInfo.lastUpdated) * 1000;
             document.getElementById('lastUpdated').textContent = new Date(timestamp).toLocaleDateString();
             const statusEl = document.getElementById('scoreStatus');
@@ -630,36 +654,67 @@ async function loadUserRegistry() {
         
         for (const addr of userAddresses) {
             try {
-                const userInfo = await contract.getUserInfo(addr);
-                const score = Number(userInfo.creditScore);
+                // Fetch user info using split functions
+                const basic = await contract.getUserInfoBasic(addr);
+                const stats = await contract.getUserInfoStats(addr);
                 
+                // Merge results
+                const userInfo = {
+                    name: basic[0],
+                    creditScore: basic[1],
+                    isActive: basic[2],
+                    lastUpdated: basic[3],
+                    stakedAmount: basic[4],
+                    totalLoans: stats[0],
+                    totalRepayments: stats[1],
+                    defaults: stats[2],
+                    totalRequests: stats[3],
+                    repaidLoansCount: stats[4]
+                };
+                
+                const score = Number(userInfo.creditScore);
+                const stakedEth = ethers.formatEther(userInfo.stakedAmount);
+
                 let scoreColor = '#4ade80'; // green
                 if (score < 550) scoreColor = '#ff6b6b'; // red
                 else if (score < 650) scoreColor = '#ffa500'; // orange
                 else if (score < 700) scoreColor = '#ffeb3b'; // yellow
-                
+
                 html += `
-                    <div style="background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 8px; padding: 1rem; display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1;">
-                            <h4 style="margin: 0 0 0.25rem 0; color: #fff;">${userInfo.name}</h4>
-                            <p style="margin: 0; color: #aaa; font-size: 0.85rem;">
-                                <strong>Score:</strong> <span style="color: ${scoreColor};">${score}</span>
-                            </p>
-                            <p style="margin: 0.25rem 0 0 0; color: #888; font-size: 0.8rem; font-family: monospace;">
-                                ${addr}
-                            </p>
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid #333; border-radius: 8px; padding: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                            <h4 style="margin: 0; color: #fff;">${userInfo.name}</h4>
+                            <button class="btn btn-primary" onclick="copyAddress('${addr}')" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">
+                                <i class="fas fa-copy"></i> Copy
+                            </button>
                         </div>
-                        <button class="btn btn-primary" onclick="copyAddress('${addr}')" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
-                            <i class="fas fa-copy"></i> Copy
-                        </button>
+                        <p style="margin: 0.25rem 0; color: #888; font-size: 0.8rem; font-family: monospace;">
+                            ${addr}
+                        </p>
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-top: 0.75rem;">
+                            <div>
+                                <p style="margin: 0; color: #aaa; font-size: 0.75rem;">Credit Score</p>
+                                <p style="margin: 0.25rem 0 0 0; color: ${scoreColor}; font-size: 1.1rem; font-weight: bold;">${score}</p>
+                            </div>
+                            <div>
+                                <p style="margin: 0; color: #aaa; font-size: 0.75rem;">Staked</p>
+                                <p style="margin: 0.25rem 0 0 0; color: #4ade80; font-size: 1.1rem; font-weight: bold;">${stakedEth} ETH</p>
+                            </div>
+                            <div>
+                                <p style="margin: 0; color: #aaa; font-size: 0.75rem;">Total Loans</p>
+                                <p style="margin: 0.25rem 0 0 0; color: #fff; font-size: 0.95rem;">${Number(userInfo.totalLoans)}</p>
+                            </div>
+                            <div>
+                                <p style="margin: 0; color: #aaa; font-size: 0.75rem;">Defaults</p>
+                                <p style="margin: 0.25rem 0 0 0; color: ${Number(userInfo.defaults) > 0 ? '#ff6b6b' : '#4ade80'}; font-size: 0.95rem;">${Number(userInfo.defaults)}</p>
+                            </div>
+                        </div>
                     </div>
                 `;
             } catch (err) {
                 console.error("Error fetching user info for", addr, err);
             }
-        }
-        
-        html += '</div>';
+        }        html += '</div>';
         registryDiv.innerHTML = html;
         
     } catch (error) {

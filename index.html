@@ -52,6 +52,10 @@
                 <button class="tab-button" data-tab="admin" style="display:none; background-color: #ff6b6b;">
                     <i class="fas fa-crown"></i> Admin Panel
                 </button>
+
+                <button class="tab-button" data-tab="registry" style="display:none;">
+                    <i class="fas fa-address-book"></i> User Registry
+                </button>
             </div>
 
             <!-- Dashboard Tab -->
@@ -234,14 +238,6 @@
             <!-- Admin Panel Tab -->
             <div id="admin" class="tab-content">
                 <div class="admin-grid">
-                    <!-- Registered Users Section -->
-                    <div class="card card-large">
-                        <h2><i class="fas fa-users"></i> Registered Users</h2>
-                        <div id="userRegistry" class="loans-container" style="max-height: 400px; overflow-y: auto;">
-                            <p class="loading-text">Loading user registry...</p>
-                        </div>
-                    </div>
-                    
                     <!-- Pending Loan Requests Section -->
                     <div class="card card-large">
                         <h2><i class="fas fa-inbox"></i> Pending Loan Requests</h2>
@@ -298,6 +294,16 @@
                             </button>
                         </form>
                         <div id="oracleUpdateStatus" class="status-message"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- User Registry Tab -->
+            <div id="registry" class="tab-content">
+                <div class="card card-large" style="max-width: 1200px; margin: 0 auto;">
+                    <h2><i class="fas fa-users"></i> Registered Users</h2>
+                    <div id="userRegistry" class="loans-container" style="max-height: 600px; overflow-y: auto;">
+                        <p class="loading-text">Loading user registry...</p>
                     </div>
                 </div>
             </div>
