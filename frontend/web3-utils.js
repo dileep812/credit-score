@@ -12,16 +12,18 @@ const CONTRACT_ABI = [
     "function recordDefault(uint256 _loanId) public",
     "function recordLatePayment(uint256 _loanId) public",
     "function requestLoan(uint256 _amount, uint256 _interestRate, uint256 _durationDays, string memory _reason) public",
-    "function approveLoan(address _borrower, uint256 _requestIndex) public",
+    "function approveLoan(address _borrower, uint256 _requestIndex) public payable",
+    "function rejectLoan(address _borrower, uint256 _requestIndex, string memory _reason) public",
     "function getLoanRequests(address _user) public view returns (tuple(uint256 requestId, address borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason, bool isApproved, bool isActive)[])",
     "function getCreditScore(address _user) public view returns (uint256)",
     "function getCreditScoreBreakdown(address _user) public view returns (uint256, uint256, uint256, uint256, uint256, uint256)",
     "function getFinancialHistory(address _user) public view returns (tuple(string activityType, uint256 amount, string description, uint256 timestamp)[])",
     "function getUserLoans(address _user) public view returns (tuple(uint256 loanId, address borrower, uint256 principal, uint256 interestRate, uint256 issueDate, uint256 dueDate, uint256 repaidAmount, uint256 totalAmountToRepay, bool isRepaid, bool isDefaulted)[])",
     "function userExists(address _user) public view returns (bool)",
-    "function getUserInfo(address _user) public view returns (tuple(string name, uint256 creditScore, uint256 totalLoans, uint256 totalRepayments, uint256 defaults, uint256 lastUpdated, bool isActive))",
+    "function getUserInfo(address _user) public view returns (tuple(string name, uint256 creditScore, uint256 totalLoans, uint256 totalRepayments, uint256 defaults, uint256 totalRequests, uint256 lastUpdated, bool isActive))",
     "function getAdmin() public view returns (address)",
     "function getLoanCount() public view returns (uint256)",
+    "function calculateTotalDebt(address _user) public view returns (uint256)",
     "function stake() public payable",
     "function unstake(uint256 _amount) public",
     "function stakes(address _user) public view returns (uint256)",
@@ -30,11 +32,43 @@ const CONTRACT_ABI = [
     "function getAllUsers() public view returns (address[])",
     "event LoanRequested(uint256 indexed requestId, address indexed borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason)",
     "event LoanApproved(uint256 indexed requestId, uint256 indexed loanId, address indexed borrower)",
+    "event LoanRejected(uint256 indexed requestId, address indexed borrower, string reason, uint256 timestamp)",
     "event LoanCreated(uint256 indexed loanId, address indexed borrower, uint256 principal, uint256 interestRate, uint256 dueDate)",
     "event Staked(address indexed user, uint256 amount, uint256 timestamp)",
     "event Unstaked(address indexed user, uint256 amount, uint256 timestamp)",
     "event ExternalScoreUpdated(address indexed user, uint256 score, uint256 timestamp)"
 ];
+
+// Error parsing helper function
+function parseErrorMessage(error) {
+    // Check for contract revert reason first
+    if (error.reason) {
+        return error.reason;
+    }
+    
+    // Check for user rejection
+    if (error.code === 'ACTION_REJECTED') {
+        return 'User rejected transaction';
+    }
+    
+    // Check for insufficient funds
+    if (error.message && error.message.toLowerCase().includes('insufficient funds')) {
+        return 'Insufficient ETH for gas';
+    }
+    
+    // Check for other common error patterns
+    if (error.message) {
+        if (error.message.includes('execution reverted')) {
+            return 'Transaction failed - check contract requirements';
+        }
+        if (error.message.includes('estimateGas')) {
+            return 'Transaction would fail - check inputs';
+        }
+    }
+    
+    // Default fallback
+    return 'Transaction Failed';
+}
 
 // Set contract address
 function setContractAddress(newAddress) {
@@ -257,14 +291,8 @@ async function loadUserData() {
             const userInfo = await contract.getUserInfo(userAddress);
             const timestamp = Number(userInfo.lastUpdated) * 1000;
             document.getElementById('lastUpdated').textContent = new Date(timestamp).toLocaleDateString();
-            displayUserProfile({
-                name: userInfo.name,
-                totalLoans: userInfo.totalLoans.toString(),
-                totalRepayments: userInfo.totalRepayments.toString(),
-                defaults: userInfo.defaults.toString(),
-                isActive: userInfo.isActive,
-                lastUpdated: timestamp
-            });
+            const statusEl = document.getElementById('scoreStatus');
+            if (statusEl) statusEl.textContent = userInfo.isActive ? 'Active' : 'Inactive';
 
             const breakdown = await contract.getCreditScoreBreakdown(userAddress);
             displayScoreBreakdown({
@@ -281,10 +309,38 @@ async function loadUserData() {
 
             try {
                 const history = await contract.getFinancialHistory(userAddress);
+                // Calculate late payment count
+                const latePaymentCount = history.filter(item => 
+                    (item.activityType || item[0]) === "Late Payment"
+                ).length;
+                
+                // Update profile with late payment count
+                displayUserProfile({
+                    name: userInfo.name,
+                    totalLoans: userInfo.totalLoans.toString(),
+                    totalRepayments: userInfo.totalRepayments.toString(),
+                    defaults: userInfo.defaults.toString(),
+                    totalRequests: userInfo.totalRequests.toString(),
+                    latePayments: latePaymentCount.toString(),
+                    isActive: userInfo.isActive,
+                    lastUpdated: timestamp
+                });
+                
                 displayFinancialHistory(history);
             } catch (hErr) {
                 console.error("History Error:", hErr);
                 document.getElementById('financialHistory').innerHTML = '<p>No history found.</p>';
+                // If history fails, still display profile without late payments
+                displayUserProfile({
+                    name: userInfo.name,
+                    totalLoans: userInfo.totalLoans.toString(),
+                    totalRepayments: userInfo.totalRepayments.toString(),
+                    defaults: userInfo.defaults.toString(),
+                    totalRequests: userInfo.totalRequests.toString(),
+                    latePayments: '0',
+                    isActive: userInfo.isActive,
+                    lastUpdated: timestamp
+                });
             }
             
             // Load staking data
@@ -371,10 +427,10 @@ async function loadAllSystemLoans() {
                         <h4>Loan #${loan.loanId}</h4>
                         <small style="color:#aaa;">Borrower: ${formatAddress(loan.borrower)}</small>
                     </div>
-                    <p><strong>Principal:</strong> ${loan.principal} Wei</p>
+                    <p><strong>Principal:</strong> ${ethers.formatEther(loan.principal.toString())} ETH</p>
                     <p><strong>Interest:</strong> ${loan.interestRate}%</p>
                     <p><strong>Due Date:</strong> ${dueDate.toLocaleDateString()}</p>
-                    <p><strong>Repaid:</strong> ${loan.repaidAmount} Wei</p>
+                    <p><strong>Repaid:</strong> ${ethers.formatEther(loan.repaidAmount.toString())} ETH</p>
                     <span class="loan-status ${statusClass}">${statusText}</span>
                 </div>
             `;
@@ -438,11 +494,11 @@ function getScoreDescription(score) {
 function displayScoreBreakdown(data) {
     const container = document.getElementById('scoreBreakdown');
     const html = `
-        <div class="breakdown-item"><h4>Payment History (35%)</h4><p>${data.paymentHistoryScore}</p></div>
-        <div class="breakdown-item"><h4>Repayment Consistency (25%)</h4><p>${data.repaymentConsistencyScore}</p></div>
-        <div class="breakdown-item"><h4>Loan Activity (20%)</h4><p>${data.loanActivityScore}</p></div>
-        <div class="breakdown-item"><h4>Collateral Score</h4><p>${data.collateralScore}</p></div>
-        <div class="breakdown-item"><h4>Oracle Score</h4><p>${data.oracleScore}</p></div>
+        <div class="breakdown-item"><h4>Payment History (Max 350)</h4><p>${data.paymentHistoryScore}</p></div>
+        <div class="breakdown-item"><h4>Repayment Consistency (Max 250)</h4><p>${data.repaymentConsistencyScore}</p></div>
+        <div class="breakdown-item"><h4>Loan Activity (Max 200)</h4><p>${data.loanActivityScore}</p></div>
+        <div class="breakdown-item"><h4>Collateral Bonus (Max 50)</h4><p>${data.collateralScore}</p></div>
+        <div class="breakdown-item"><h4>Oracle Bonus (Max 50)</h4><p>${data.oracleScore}</p></div>
         <div class="breakdown-item"><h4>Total Score (Max 900)</h4><p>${data.totalScore}</p></div>
     `;
     container.innerHTML = html;
@@ -450,12 +506,15 @@ function displayScoreBreakdown(data) {
 
 function displayUserProfile(profile) {
     const container = document.getElementById('userProfile');
+    // Convert totalRepayments from Wei to ETH
+    const totalRepaymentsEth = ethers.formatEther(profile.totalRepayments.toString());
     const html = `
         <div class="profile-item"><label>Name</label><strong>${profile.name}</strong></div>
         <div class="profile-item"><label>Total Loans</label><strong>${profile.totalLoans}</strong></div>
-        <div class="profile-item"><label>Total Repayments</label><strong>${profile.totalRepayments} Wei</strong></div>
+        <div class="profile-item"><label>Total Requests</label><strong>${profile.totalRequests}</strong></div>
+        <div class="profile-item"><label>Total Repayments</label><strong>${totalRepaymentsEth} ETH</strong></div>
         <div class="profile-item"><label>Defaults</label><strong>${profile.defaults}</strong></div>
-        <div class="profile-item"><label>Status</label><strong>${profile.isActive ? 'Active' : 'Inactive'}</strong></div>
+        <div class="profile-item"><label>Late Payments</label><strong>${profile.latePayments}</strong></div>
     `;
     container.innerHTML = html;
 }
@@ -477,11 +536,14 @@ function displayFinancialHistory(history) {
         const timeNum = typeof time === 'bigint' ? Number(time) : Number(time);
         const date = new Date(timeNum * 1000);
         
+        // Convert amount from Wei to ETH
+        const amountEth = ethers.formatEther(amount.toString());
+        
         html += `
             <div class="history-item">
                 <h4>${type}</h4>
                 <span class="activity-type">${type}</span>
-                <p class="activity-amount">${amount.toString()} Wei</p>
+                <p class="activity-amount">${amountEth} ETH</p>
                 <p><small>${desc}</small></p>
                 <p><small>📅 ${date.toLocaleString()}</small></p>
             </div>
@@ -687,6 +749,7 @@ async function loadAdminRequests() {
                             requestIndex: index,
                             requestId: req.requestId.toString(),
                             amount: ethers.formatEther(req.amount),
+                            amountWei: req.amount.toString(),
                             interestRate: req.interestRate.toString(),
                             durationDays: req.durationDays.toString(),
                             reason: req.reason
@@ -710,9 +773,14 @@ async function loadAdminRequests() {
                             <p style="margin:0; color: #aaa;"><strong>Amount:</strong> ${req.amount} ETH</p>
                             <p style="margin:0; color: #aaa;"><strong>Reason:</strong> "${req.reason}"</p>
                         </div>
-                        <button class="btn btn-success" onclick="approveRequest('${req.borrower}', ${req.requestIndex})">
-                            <i class="fas fa-check"></i> Approve
-                        </button>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button class="btn btn-success" onclick="approveRequest('${req.borrower}', ${req.requestIndex}, '${req.amountWei}')">
+                                <i class="fas fa-check"></i> Approve
+                            </button>
+                            <button class="btn" style="background-color: #dc2626; border-color: #dc2626;" onclick="rejectRequest('${req.borrower}', ${req.requestIndex})">
+                                <i class="fas fa-times"></i> Reject
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
@@ -723,17 +791,38 @@ async function loadAdminRequests() {
     }
 }
 
-async function approveRequest(borrowerAddress, requestIndex) {
+async function approveRequest(borrowerAddress, requestIndex, amountWei) {
     if (!isAdmin() || !contract) return;
-    if (!confirm(`Approve loan for ${formatAddress(borrowerAddress)}?`)) return;
+    const amountEth = ethers.formatEther(amountWei);
+    if (!confirm(`Approve loan for ${formatAddress(borrowerAddress)}?\n\nYou will send: ${amountEth} ETH`)) return;
     try {
-        document.getElementById('pendingRequests').innerHTML = '<p class="loading-text">Approving...</p>';
-        const tx = await contract.approveLoan(borrowerAddress, requestIndex);
+        document.getElementById('pendingRequests').innerHTML = '<p class="loading-text">Approving and funding loan...</p>';
+        const tx = await contract.approveLoan(borrowerAddress, requestIndex, { value: amountWei });
         await tx.wait();
-        alert(`✅ Loan approved!`);
+        alert(`✅ Loan approved and ${amountEth} ETH sent to borrower!`);
         loadAdminRequests();
         loadAdminHistory();
         loadAllSystemLoans(); 
+    } catch (error) {
+        alert(`Error: ${error.message || error}`);
+        loadAdminRequests();
+    }
+}
+
+async function rejectRequest(borrowerAddress, requestIndex) {
+    if (!isAdmin() || !contract) return;
+    const reason = prompt(`Enter rejection reason for ${formatAddress(borrowerAddress)}:`);
+    if (!reason || reason.trim() === '') {
+        alert('Rejection reason is required.');
+        return;
+    }
+    try {
+        document.getElementById('pendingRequests').innerHTML = '<p class="loading-text">Rejecting...</p>';
+        const tx = await contract.rejectLoan(borrowerAddress, requestIndex, reason);
+        await tx.wait();
+        alert(`❌ Loan request rejected.`);
+        loadAdminRequests();
+        loadAdminHistory();
     } catch (error) {
         alert(`Error: ${error.message || error}`);
         loadAdminRequests();
@@ -752,17 +841,53 @@ async function loadStakingData() {
     if (!stakingInfo) return;
     
     try {
+        // Fetch staked amount
         const stakedAmount = await contract.stakes(userAddress);
         const stakedEth = ethers.formatEther(stakedAmount.toString());
         
+        // Calculate total debt from active and defaulted loans
+        const userLoansArray = await contract.getUserLoans(userAddress);
+        let totalDebt = 0n;
+        
+        for (let loan of userLoansArray) {
+            if (!loan.isRepaid) {
+                const remainingDebt = loan.totalAmountToRepay - loan.repaidAmount;
+                totalDebt += remainingDebt;
+            }
+        }
+        
+        const debtEth = ethers.formatEther(totalDebt.toString());
+        
+        // Calculate available to unstake
+        let availableAmount = 0n;
+        if (stakedAmount > totalDebt) {
+            availableAmount = stakedAmount - totalDebt;
+        }
+        const availableEth = ethers.formatEther(availableAmount.toString());
+        
+        // Display debt-aware staking information
         stakingInfo.innerHTML = `
             <div class="card">
-                <h3>💰 Your Staking Balance</h3>
-                <p class="activity-amount" style="font-size: 2rem; color: #4ade80;">${stakedEth} ETH</p>
-                <p style="color: #aaa;">
-                    ${stakedAmount >= ethers.parseEther("0.01") 
-                        ? "✅ Earning +50 credit score bonus!" 
-                        : "⚠️ Stake at least 0.01 ETH to earn +50 credit score bonus"}
+                <h3>💰 Collateral Status</h3>
+                <div style="margin: 15px 0;">
+                    <p style="font-size: 0.9rem; color: #aaa; margin: 5px 0;">Total Staked:</p>
+                    <p class="activity-amount" style="font-size: 1.8rem; color: #4ade80; margin: 5px 0;">${stakedEth} ETH</p>
+                </div>
+                <div style="margin: 15px 0;">
+                    <p style="font-size: 0.9rem; color: #aaa; margin: 5px 0;">Locked for Debt:</p>
+                    <p class="activity-amount" style="font-size: 1.5rem; color: #f59e0b; margin: 5px 0;">${debtEth} ETH</p>
+                </div>
+                <div style="margin: 15px 0; padding: 15px; background: rgba(74, 222, 128, 0.1); border-radius: 8px;">
+                    <p style="font-size: 0.9rem; color: #aaa; margin: 5px 0;">Available to Unstake:</p>
+                    <p class="activity-amount" style="font-size: 2rem; color: #10b981; margin: 5px 0; font-weight: bold;">${availableEth} ETH</p>
+                </div>
+                <p style="color: #aaa; font-size: 0.85rem; margin-top: 15px;">
+                    ${totalDebt > 0n 
+                        ? "⚠️ Collateral locked until loans are repaid or defaulted" 
+                        : "✅ No active debt - full amount available"}
+                </p>
+                <p style="color: #aaa; font-size: 0.85rem; margin-top: 8px;">
+                    💡 Staking 1 ETH = +50 credit score points (proportional)
                 </p>
             </div>
         `;

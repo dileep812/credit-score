@@ -10,6 +10,7 @@ contract CreditScore {
         uint256 totalLoans;
         uint256 totalRepayments;
         uint256 defaults;
+        uint256 totalRequests;
         uint256 lastUpdated;
         bool isActive;
     }
@@ -75,6 +76,7 @@ contract CreditScore {
     event CreditScoreUpdated(address indexed user, uint256 newScore, uint256 timestamp);
     event LoanRequested(uint256 indexed requestId, address indexed borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason);
     event LoanApproved(uint256 indexed requestId, uint256 indexed loanId, address indexed borrower);
+    event LoanRejected(uint256 indexed requestId, address indexed borrower, string reason, uint256 timestamp);
     event Staked(address indexed user, uint256 amount, uint256 timestamp);
     event Unstaked(address indexed user, uint256 amount, uint256 timestamp);
     event ExternalScoreUpdated(address indexed user, uint256 score, uint256 timestamp);
@@ -101,14 +103,15 @@ contract CreditScore {
     // User Registration
     function registerUser(string memory _name) public {
         require(!registeredUsers[msg.sender], "User already registered");
-        require(bytes(_name).length > 0, "Name cannot be empty");
+        require(bytes(_name).length > 0, "No Name");
         
         users[msg.sender] = User({
             name: _name,
-            creditScore: 600,
+            creditScore: 50, // Start with base score (growth model)
             totalLoans: 0,
             totalRepayments: 0,
             defaults: 0,
+            totalRequests: 0,
             lastUpdated: block.timestamp,
             isActive: true
         });
@@ -171,7 +174,7 @@ contract CreditScore {
         uint256 _durationDays,
         string memory _reason
     ) public {
-        require(registeredUsers[msg.sender], "User not registered");
+        require(registeredUsers[msg.sender], "Not registered");
         require(_amount > 0, "Amount must be > 0");
         require(_interestRate <= 100, "Invalid interest rate");
         require(_durationDays > 0, "Duration must be > 0");
@@ -188,29 +191,51 @@ contract CreditScore {
             isActive: true
         });
         loanRequests[msg.sender].push(lr);
+        
+        // Hard Inquiry Penalty: Increment request count and update score
+        users[msg.sender].totalRequests += 1;
+        updateCreditScore(msg.sender);
+        
         emit LoanRequested(requestCounter, msg.sender, _amount, _interestRate, _durationDays, _reason);
         requestCounter += 1;
     }
 
     // Admin approves a specific loan request
-    function approveLoan(address _borrower, uint256 _requestIndex) public onlyAdmin {
+    function approveLoan(address _borrower, uint256 _requestIndex) public payable onlyAdmin {
         require(registeredUsers[_borrower], "Borrower not registered");
-        require(_requestIndex < loanRequests[_borrower].length, "Invalid request index");
+        require(_requestIndex < loanRequests[_borrower].length, "Invalid index");
         LoanRequest storage req = loanRequests[_borrower][_requestIndex];
         require(req.isActive, "Request inactive");
         require(!req.isApproved, "Already approved");
+        require(msg.value == req.amount, "Must send exact loan amount");
 
         req.isApproved = true;
         req.isActive = false;
+
+        // Transfer loan amount to borrower
+        payable(_borrower).transfer(msg.value);
 
         _createLoan(_borrower, req.amount, req.interestRate, req.durationDays);
 
         emit LoanApproved(req.requestId, loanCounter - 1, _borrower);
     }
     
+    // Admin rejects a loan request
+    function rejectLoan(address _borrower, uint256 _requestIndex, string memory _reason) public onlyAdmin {
+        require(registeredUsers[_borrower], "Borrower not registered");
+        require(_requestIndex < loanRequests[_borrower].length, "Invalid index");
+        LoanRequest storage req = loanRequests[_borrower][_requestIndex];
+        require(req.isActive, "Request already processed");
+        require(!req.isApproved, "Cannot reject approved loan");
+
+        req.isActive = false;
+
+        emit LoanRejected(req.requestId, _borrower, _reason, block.timestamp);
+    }
+    
     // Record Repayment (User sends ETH)
     function recordRepayment(uint256 _loanId) public payable {
-        require(msg.value > 0, "Amount must be greater than 0");
+        require(msg.value > 0, "Amount > 0");
         
         address borrower = loanBorrower[_loanId];
         require(borrower != address(0), "Loan does not exist");
@@ -230,6 +255,9 @@ contract CreditScore {
         if (loan.repaidAmount == loan.totalAmountToRepay) {
             loan.isRepaid = true;
         }
+        
+        // Transfer repayment to admin
+        payable(admin).transfer(msg.value);
         
         if (registeredUsers[borrower]) {
             users[borrower].totalRepayments += msg.value;
@@ -302,46 +330,66 @@ contract CreditScore {
     }
     
     // Get Credit Score Breakdown
+// Get Credit Score Breakdown - Optimized to fix "Stack too deep"
     function getCreditScoreBreakdown(address _user) public view returns (uint256, uint256, uint256, uint256, uint256, uint256) {
         if (!registeredUsers[_user]) {
             return (0, 0, 0, 0, 0, 0);
         }
         
         User storage user = users[_user];
-        uint256 totalLoans = user.totalLoans;
-        uint256 defaults = user.defaults;
-        uint256 repaymentConsistency = totalLoans > 0 ? ((totalLoans - defaults) * 100) / totalLoans : 0;
         
-        // Payment History (35% of base score)
-        uint256 paymentHistoryScore = 350 - (defaults * 50);
-        if (paymentHistoryScore < 0) paymentHistoryScore = 0;
-        if (paymentHistoryScore > 350) paymentHistoryScore = 350;
+        // Optimize memory: Use an array instead of individual variables
+        // [0]=History, [1]=Consistency, [2]=Activity, [3]=Collateral, [4]=Oracle, [5]=Total
+        uint256[6] memory scores; 
+
+        // Calculation Block (Scoped to free memory)
+        {
+            uint256 totalLoans = user.totalLoans;
+            uint256 defaults = user.defaults;
+            uint256 successfulLoans = totalLoans > defaults ? totalLoans - defaults : 0;
+
+            // 1. Payment History (Max 350) - Growth Model
+            uint256 rawPayment = 50 + (successfulLoans * 30);
+            uint256 penalty = defaults * 50;
+            if (penalty > rawPayment) {
+                scores[0] = 0;
+            } else {
+                scores[0] = rawPayment - penalty;
+            }
+            if (scores[0] > 350) scores[0] = 350;
+
+            // 2. Consistency (Max 250)
+            scores[1] = successfulLoans * 25;
+            if (scores[1] > 250) scores[1] = 250;
+
+            // 3. Loan Activity (Max 200)
+            scores[2] = totalLoans * 20;
+            if (scores[2] > 200) scores[2] = 200;
+        }
+
+        // 4. Collateral Bonus (Max 50) - Proportional based on 1 ETH target
+        scores[3] = (stakes[_user] * 50) / 1 ether;
+        if (scores[3] > 50) scores[3] = 50;
         
-        // Repayment Consistency (25% of base score)
-        uint256 repaymentConsistencyScore = (repaymentConsistency * 250) / 100;
-        if (repaymentConsistencyScore > 250) repaymentConsistencyScore = 250;
+        // 5. Oracle Bonus (Max 50)
+        scores[4] = externalScores[_user];
+        if (scores[4] > 50) scores[4] = 50;
         
-        // Loan Activity (20% of base score)
-        uint256 loanActivityScore = totalLoans > 0 ? (totalLoans * 200) / 10 : 0;
-        if (loanActivityScore > 200) loanActivityScore = 200;
+        // 6. Total Score (Max 900)
+        scores[5] = scores[0] + scores[1] + scores[2] + scores[3] + scores[4];
         
-        // NEW: Collateral Score - Staking bonus (up to 50 points)
-        uint256 collateralScore = 0;
-        if (stakes[_user] >= 0.01 ether) {
-            collateralScore = 50;
+        // Apply Hard Inquiry Penalty (-10 per request)
+        uint256 reqPenalty = user.totalRequests * 10;
+        if (reqPenalty > scores[5]) {
+            scores[5] = 0;
+        } else {
+            scores[5] -= reqPenalty;
         }
         
-        // NEW: External Score - Oracle data (up to 50 points)
-        uint256 oracleScore = externalScores[_user];
-        if (oracleScore > 50) oracleScore = 50;
+        if (scores[5] > 900) scores[5] = 900;
         
-        // Total Score (Max 900: 350+250+200+50+50)
-        uint256 totalScore = paymentHistoryScore + repaymentConsistencyScore + loanActivityScore + collateralScore + oracleScore;
-        if (totalScore > 900) totalScore = 900;
-        
-        return (paymentHistoryScore, repaymentConsistencyScore, loanActivityScore, collateralScore, oracleScore, totalScore);
+        return (scores[0], scores[1], scores[2], scores[3], scores[4], scores[5]);
     }
-    
     // Get Financial History
     function getFinancialHistory(address _user) public view onlyRegistered(_user) returns (FinancialActivity[] memory) {
         return financialHistory[_user];
@@ -434,10 +482,26 @@ contract CreditScore {
 
     // ========== STAKING FUNCTIONS (COLLATERAL) ==========
     
+    // Calculate total outstanding debt (including defaulted loans)
+    function calculateTotalDebt(address _user) public view returns (uint256) {
+        Loan[] storage userLoanArray = userLoans[_user];
+        uint256 totalDebt = 0;
+        
+        for (uint256 i = 0; i < userLoanArray.length; i++) {
+            // Include active loans AND defaulted loans (prevent running away with collateral)
+            if (!userLoanArray[i].isRepaid) {
+                uint256 remainingDebt = userLoanArray[i].totalAmountToRepay - userLoanArray[i].repaidAmount;
+                totalDebt += remainingDebt;
+            }
+        }
+        
+        return totalDebt;
+    }
+    
     // Stake ETH as collateral
     function stake() public payable {
         require(msg.value > 0, "Must stake a positive amount");
-        require(registeredUsers[msg.sender], "Must be registered to stake");
+        require(registeredUsers[msg.sender], "Not registered");
         
         stakes[msg.sender] += msg.value;
         
@@ -454,18 +518,17 @@ contract CreditScore {
         emit Staked(msg.sender, msg.value, block.timestamp);
     }
     
-    // Unstake ETH (withdraw collateral)
+    // Unstake ETH (withdraw collateral) - Debt-Aware
     function unstake(uint256 _amount) public {
-        require(registeredUsers[msg.sender], "User not registered");
+        require(registeredUsers[msg.sender], "Not registered");
         require(stakes[msg.sender] >= _amount, "Insufficient staked balance");
-        require(_amount > 0, "Amount must be greater than 0");
+        require(_amount > 0, "Amount > 0");
         
-        // Check if user has any active loans
-        Loan[] storage userLoanArray = userLoans[msg.sender];
-        for (uint256 i = 0; i < userLoanArray.length; i++) {
-            require(userLoanArray[i].isRepaid || userLoanArray[i].isDefaulted, 
-                "Cannot unstake while you have active loans");
-        }
+        // Get total debt (active + defaulted loans)
+        uint256 totalDebt = calculateTotalDebt(msg.sender);
+        
+        // Ensure enough collateral remains to cover debt
+        require((stakes[msg.sender] - _amount) >= totalDebt, "Cannot withdraw: Funds locked for active debt");
         
         stakes[msg.sender] -= _amount;
         payable(msg.sender).transfer(_amount);
@@ -487,7 +550,7 @@ contract CreditScore {
     
     // Admin updates external credit score (simulating Chainlink oracle)
     function updateExternalScore(address _user, uint256 _score) public onlyAdmin {
-        require(registeredUsers[_user], "User not registered");
+        require(registeredUsers[_user], "Not registered");
         require(_score <= 50, "External score cannot exceed 50 points");
         
         externalScores[_user] = _score;

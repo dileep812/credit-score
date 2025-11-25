@@ -1,33 +1,41 @@
-// Main Application Logic
+// ========== HELPER: Display Status Message ==========
+function displayStatus(elementId, message, type) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.textContent = message;
+        element.className = 'status-message ' + type;
+        element.style.display = 'block';
+    }
+}
 
-// Register User
+// ========== USER REGISTRATION ==========
 document.getElementById('registerForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
     if (!userAddress) {
-        showStatus("Please connect your wallet first", "error");
+        displayStatus('registerStatus', "Please connect your wallet first", "error");
         return;
     }
     
     if (!contract) {
-        showStatus("Contract not initialized", "error");
+        displayStatus('registerStatus', "Contract not initialized", "error");
         return;
     }
     
     const name = document.getElementById('userName').value.trim();
     
     if (!name) {
-        showStatus("Please enter your name", "error");
+        displayStatus('registerStatus', "Please enter your name", "error");
         return;
     }
     
     try {
-        showStatus("Registering user...", "loading");
+        displayStatus('registerStatus', "Registering on blockchain...", "loading");
         
         const tx = await contract.registerUser(name);
         const receipt = await tx.wait();
         
-        showStatus(`✅ Registration successful! TX: ${receipt.hash}`, "success");
+        displayStatus('registerStatus', `✅ Registration successful! TX: ${receipt.hash}`, "success");
         document.getElementById('userName').value = '';
         
         setTimeout(() => {
@@ -35,21 +43,21 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
         }, 2000);
     } catch (error) {
         console.error("Error:", error);
-        showStatus(`Error: ${error.message || error}`, "error");
+        displayStatus('registerStatus', parseErrorMessage(error), "error");
     }
 });
 
-// Record Loan Repayment (User)
+// ========== REPAYMENT FORM ==========
 document.getElementById('repaymentForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
     if (!userAddress) {
-        showStatus("Please connect your wallet first", "error");
+        displayStatus('repaymentStatus', "Please connect your wallet first", "error");
         return;
     }
     
     if (!contract) {
-        showStatus("Contract not initialized", "error");
+        displayStatus('repaymentStatus', "Contract not initialized", "error");
         return;
     }
     
@@ -57,25 +65,25 @@ document.getElementById('repaymentForm').addEventListener('submit', async (e) =>
     const amount = document.getElementById('repaymentAmount').value.trim();
     
     if (!loanId || !amount) {
-        showStatus("Please fill in all fields", "error");
+        displayStatus('repaymentStatus', "Please fill in all fields", "error");
         return;
     }
     
     // Strict validation: amount must be positive
     if (parseFloat(amount) <= 0) {
-        showStatus("Repayment amount must be a positive value", "error");
+        displayStatus('repaymentStatus', "Repayment amount must be a positive value", "error");
         return;
     }
     
     try {
-        showStatus("Recording repayment...", "loading");
+        displayStatus('repaymentStatus', "Recording repayment...", "loading");
         
         // Send ETH with the transaction using { value: ... }
         const amountInWei = ethers.parseEther(amount);
         const tx = await contract.recordRepayment(parseInt(loanId), { value: amountInWei });
         const receipt = await tx.wait();
         
-        showStatus(`✅ Repayment recorded! TX: ${receipt.hash}`, "success");
+        displayStatus('repaymentStatus', `✅ Repayment recorded! TX: ${receipt.hash}`, "success");
         document.getElementById('loanId').value = '';
         document.getElementById('repaymentAmount').value = '';
         
@@ -84,21 +92,21 @@ document.getElementById('repaymentForm').addEventListener('submit', async (e) =>
         }, 2000);
     } catch (error) {
         console.error("Error:", error);
-        showStatus(`Error: ${error.message || error}`, "error");
+        displayStatus('repaymentStatus', parseErrorMessage(error), "error");
     }
 });
 
-// Request Loan (User)
+// ========== REQUEST LOAN FORM ==========
 document.getElementById('requestLoanForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
     if (!userAddress) {
-        showStatus("Please connect your wallet first", "error");
+        displayStatus('requestLoanStatus', "Please connect your wallet first", "error");
         return;
     }
     
     if (!contract) {
-        showStatus("Contract not initialized", "error");
+        displayStatus('requestLoanStatus', "Contract not initialized", "error");
         return;
     }
     
@@ -108,18 +116,18 @@ document.getElementById('requestLoanForm').addEventListener('submit', async (e) 
     const reason = document.getElementById('requestReason').value.trim();
     
     if (!amount || !interestRate || !durationDays || !reason) {
-        showStatus("Please fill in all fields", "error");
+        displayStatus('requestLoanStatus', "Please fill in all fields", "error");
         return;
     }
     
     // Strict validation: values must be positive
     if (parseFloat(amount) <= 0 || parseFloat(interestRate) <= 0 || parseInt(durationDays) <= 0) {
-        showStatus("Amount, interest rate, and duration must be positive values", "error");
+        displayStatus('requestLoanStatus', "Amount, interest rate, and duration must be positive values", "error");
         return;
     }
     
     try {
-        showStatus("Submitting loan request...", "loading");
+        displayStatus('requestLoanStatus', "Submitting loan request...", "loading");
         
         const amountInWei = ethers.parseEther(amount);
         const tx = await contract.requestLoan(
@@ -130,7 +138,7 @@ document.getElementById('requestLoanForm').addEventListener('submit', async (e) 
         );
         const receipt = await tx.wait();
         
-        showStatus(`✅ Loan request submitted! TX: ${receipt.hash}`, "success");
+        displayStatus('requestLoanStatus', `✅ Loan request submitted! TX: ${receipt.hash}`, "success");
         document.getElementById('requestLoanForm').reset();
         
         setTimeout(() => {
@@ -138,41 +146,26 @@ document.getElementById('requestLoanForm').addEventListener('submit', async (e) 
         }, 2000);
     } catch (error) {
         console.error("Loan request error:", error);
-        showStatus(`Error: ${error.message || error}`, "error");
+        displayStatus('requestLoanStatus', parseErrorMessage(error), "error");
     }
 });
 
-// Refresh Credit Score
+// ========== REFRESH CREDIT SCORE ==========
 if (document.getElementById('refreshScore')) {
     document.getElementById('refreshScore').addEventListener('click', async () => {
         if (!userAddress) return;
         
         try {
-            showStatus("Refreshing credit score...", "loading");
+            displayStatus('dashboardStatus', "Refreshing credit score...", "loading");
             loadUserData();
-            showStatus("Credit score updated", "success");
+            displayStatus('dashboardStatus', "Credit score updated", "success");
         } catch (error) {
-            showStatus(`Error: ${error.message}`, "error");
+            displayStatus('dashboardStatus', parseErrorMessage(error), "error");
         }
     });
 }
 
-// Override showStatus to target specific form's status message
-window.showStatus = function(message, type) {
-    const activeTab = document.querySelector('.tab-content.active');
-    if (!activeTab) return;
-    
-    const statusDiv = activeTab.querySelector('.status-message');
-    
-    if (statusDiv) {
-        statusDiv.textContent = message;
-        statusDiv.className = 'status-message ' + type;
-        statusDiv.style.display = 'block';
-    }
-};
-
 // ========== ADMIN FUNCTIONS ==========
-
 function initAdminForms() {
     // ===== RECORD DEFAULT (Admin Only) =====
     const recordDefaultForm = document.getElementById('recordDefaultForm');
@@ -181,29 +174,29 @@ function initAdminForms() {
             e.preventDefault();
             
             if (!isAdmin()) {
-                showStatus("Admin only function", "error");
+                displayStatus('recordDefaultStatus', "Admin only function", "error");
                 return;
             }
             
             if (!contract) {
-                showStatus("Contract not initialized", "error");
+                displayStatus('recordDefaultStatus', "Contract not initialized", "error");
                 return;
             }
             
             const loanId = document.getElementById('defaultLoanId').value.trim();
             
             if (!loanId || loanId === "0") {
-                showStatus("Please enter valid loan ID", "error");
+                displayStatus('recordDefaultStatus', "Please enter valid loan ID", "error");
                 return;
             }
             
             try {
-                showStatus("Recording default on blockchain...", "loading");
+                displayStatus('recordDefaultStatus', "Recording default on blockchain...", "loading");
                 
                 const tx = await contract.recordDefault(parseInt(loanId));
                 const receipt = await tx.wait();
                 
-                showStatus(`✅ Default recorded for Loan #${loanId}! TX: ${receipt.hash}`, "success");
+                displayStatus('recordDefaultStatus', `✅ Default recorded for Loan #${loanId}! TX: ${receipt.hash}`, "success");
                 recordDefaultForm.reset();
                 
                 setTimeout(() => {
@@ -211,7 +204,7 @@ function initAdminForms() {
                 }, 2000);
             } catch (error) {
                 console.error("Default recording error:", error);
-                showStatus(`Error: ${error.message || error}`, "error");
+                displayStatus('recordDefaultStatus', parseErrorMessage(error), "error");
             }
         });
     }
@@ -223,29 +216,29 @@ function initAdminForms() {
             e.preventDefault();
             
             if (!isAdmin()) {
-                showStatus("Admin only function", "error");
+                displayStatus('recordLatePaymentStatus', "Admin only function", "error");
                 return;
             }
             
             if (!contract) {
-                showStatus("Contract not initialized", "error");
+                displayStatus('recordLatePaymentStatus', "Contract not initialized", "error");
                 return;
             }
             
             const loanId = document.getElementById('lateLoanId').value.trim();
             
             if (!loanId || loanId === "0") {
-                showStatus("Please enter valid loan ID", "error");
+                displayStatus('recordLatePaymentStatus', "Please enter valid loan ID", "error");
                 return;
             }
             
             try {
-                showStatus("Recording late payment on blockchain...", "loading");
+                displayStatus('recordLatePaymentStatus', "Recording late payment on blockchain...", "loading");
                 
                 const tx = await contract.recordLatePayment(parseInt(loanId));
                 const receipt = await tx.wait();
                 
-                showStatus(`✅ Late payment recorded for Loan #${loanId}! TX: ${receipt.hash}`, "success");
+                displayStatus('recordLatePaymentStatus', `✅ Late payment recorded for Loan #${loanId}! TX: ${receipt.hash}`, "success");
                 recordLatePaymentForm.reset();
                 
                 setTimeout(() => {
@@ -253,68 +246,96 @@ function initAdminForms() {
                 }, 2000);
             } catch (error) {
                 console.error("Late payment recording error:", error);
-                showStatus(`Error: ${error.message || error}`, "error");
+                displayStatus('recordLatePaymentStatus', parseErrorMessage(error), "error");
             }
         });
     }
 }
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    initAdminForms();
-    initCollateralForms();
-    initOracleForm();
-});
-
-// ========== USER COLLATERAL (STAKING) FORMS ==========
+// ========== COLLATERAL MANAGEMENT ==========
 function initCollateralForms() {
     const stakeForm = document.getElementById('stakeForm');
     if (stakeForm) {
         stakeForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (!userAddress) { showStatus('Connect wallet first', 'error'); return; }
-            if (!contract) { showStatus('Contract not initialized', 'error'); return; }
-            const amt = document.getElementById('stakeAmount').value.trim();
-            if (!amt || parseFloat(amt) <= 0) { 
-                showStatus('Stake amount must be a positive value', 'error'); 
-                return; 
+            
+            if (!userAddress) {
+                displayStatus('stakeStatus', 'Connect wallet first', 'error');
+                return;
             }
+            
+            if (!contract) {
+                displayStatus('stakeStatus', 'Contract not initialized', 'error');
+                return;
+            }
+            
+            const amt = document.getElementById('stakeAmount').value.trim();
+            
+            if (!amt || parseFloat(amt) <= 0) {
+                displayStatus('stakeStatus', 'Stake amount must be a positive value', 'error');
+                return;
+            }
+            
             try {
-                showStatus('Staking ETH...', 'loading');
+                displayStatus('stakeStatus', 'Staking ETH...', 'loading');
+                
                 const wei = ethers.parseEther(amt);
                 const tx = await contract.stake({ value: wei });
                 const receipt = await tx.wait();
-                showStatus(`✅ Staked ${amt} ETH (TX: ${receipt.hash})`, 'success');
+                
+                displayStatus('stakeStatus', `✅ Staked ${amt} ETH (TX: ${receipt.hash})`, 'success');
                 stakeForm.reset();
-                setTimeout(() => { loadUserData(); loadStakingData(); }, 1500);
+                
+                setTimeout(() => {
+                    loadUserData();
+                    loadStakingData();
+                }, 1500);
             } catch (err) {
                 console.error(err);
-                showStatus(`Error: ${err.message || err}`, 'error');
+                displayStatus('stakeStatus', parseErrorMessage(err), 'error');
             }
         });
     }
+    
     const unstakeForm = document.getElementById('unstakeForm');
     if (unstakeForm) {
         unstakeForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (!userAddress) { showStatus('Connect wallet first', 'error'); return; }
-            if (!contract) { showStatus('Contract not initialized', 'error'); return; }
-            const amt = document.getElementById('unstakeAmount').value.trim();
-            if (!amt || parseFloat(amt) <= 0) { 
-                showStatus('Unstake amount must be a positive value', 'error'); 
-                return; 
+            
+            if (!userAddress) {
+                displayStatus('unstakeStatus', 'Connect wallet first', 'error');
+                return;
             }
+            
+            if (!contract) {
+                displayStatus('unstakeStatus', 'Contract not initialized', 'error');
+                return;
+            }
+            
+            const amt = document.getElementById('unstakeAmount').value.trim();
+            
+            if (!amt || parseFloat(amt) <= 0) {
+                displayStatus('unstakeStatus', 'Unstake amount must be a positive value', 'error');
+                return;
+            }
+            
             try {
-                showStatus('Unstaking ETH...', 'loading');
+                displayStatus('unstakeStatus', 'Unstaking ETH...', 'loading');
+                
                 const wei = ethers.parseEther(amt);
                 const tx = await contract.unstake(wei);
                 const receipt = await tx.wait();
-                showStatus(`✅ Unstaked ${amt} ETH (TX: ${receipt.hash})`, 'success');
+                
+                displayStatus('unstakeStatus', `✅ Unstaked ${amt} ETH (TX: ${receipt.hash})`, 'success');
                 unstakeForm.reset();
-                setTimeout(() => { loadUserData(); loadStakingData(); }, 1500);
+                
+                setTimeout(() => {
+                    loadUserData();
+                    loadStakingData();
+                }, 1500);
             } catch (err) {
                 console.error(err);
-                showStatus(`Error: ${err.message || err}`, 'error');
+                displayStatus('unstakeStatus', parseErrorMessage(err), 'error');
             }
         });
     }
@@ -324,27 +345,62 @@ function initCollateralForms() {
 function initOracleForm() {
     const oracleForm = document.getElementById('oracleUpdateForm');
     if (!oracleForm) return;
+    
     oracleForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        if (!isAdmin()) { showStatus('Admin only function', 'error'); return; }
-        if (!contract) { showStatus('Contract not initialized', 'error'); return; }
+        
+        if (!isAdmin()) {
+            displayStatus('oracleUpdateStatus', 'Admin only function', 'error');
+            return;
+        }
+        
+        if (!contract) {
+            displayStatus('oracleUpdateStatus', 'Contract not initialized', 'error');
+            return;
+        }
+        
         const userAddr = document.getElementById('oracleUserAddress').value.trim();
         const scoreStr = document.getElementById('oracleScore').value.trim();
-        if (!userAddr || !ethers.isAddress(userAddr)) { showStatus('Invalid user address', 'error'); return; }
-        if (!scoreStr) { showStatus('Enter score', 'error'); return; }
+        
+        if (!userAddr || !ethers.isAddress(userAddr)) {
+            displayStatus('oracleUpdateStatus', 'Invalid user address', 'error');
+            return;
+        }
+        
+        if (!scoreStr) {
+            displayStatus('oracleUpdateStatus', 'Enter score', 'error');
+            return;
+        }
+        
         const score = parseInt(scoreStr);
-        if (score < 0 || score > 50) { showStatus('Score must be between 0 and 50', 'error'); return; }
+        if (score < 0 || score > 50) {
+            displayStatus('oracleUpdateStatus', 'Score must be between 0 and 50', 'error');
+            return;
+        }
+        
         try {
-            showStatus('Updating external score...', 'loading');
+            displayStatus('oracleUpdateStatus', 'Updating external score...', 'loading');
+            
             const tx = await contract.updateExternalScore(userAddr, score);
             const receipt = await tx.wait();
-            showStatus(`✅ External score updated (TX: ${receipt.hash})`, 'success');
+            
+            displayStatus('oracleUpdateStatus', `✅ External score updated (TX: ${receipt.hash})`, 'success');
             oracleForm.reset();
-            setTimeout(() => { loadUserData(); }, 1500);
+            
+            setTimeout(() => {
+                loadUserData();
+            }, 1500);
         } catch (err) {
             console.error(err);
-            showStatus(`Error: ${err.message || err}`, 'error');
+            displayStatus('oracleUpdateStatus', parseErrorMessage(err), 'error');
         }
     });
 }
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    initAdminForms();
+    initCollateralForms();
+    initOracleForm();
+});
 
