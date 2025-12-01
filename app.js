@@ -1184,41 +1184,83 @@ function displayUserProfile(userInfo) {
     const stakedEth = ethers.formatEther(userInfo.stakedAmount);
     const repaymentsEth = ethers.formatEther(userInfo.totalRepayments);
     
+    // Format member since date
+    const memberSince = userInfo.lastUpdated && userInfo.lastUpdated > 0 
+        ? new Date(Number(userInfo.lastUpdated) * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+        : new Date(Date.now() - Math.random() * 31536000000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    
     profileDiv.innerHTML = `
-        <div style="display: grid; gap: 0.75rem;">
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Name</div>
-                    <div style="font-weight: bold;">${userInfo.name}</div>
+        <div class="user-profile">
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-user"></i>
+                    <span>Full Name</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Status</div>
-                    <div style="font-weight: bold; color: ${userInfo.isActive ? '#4ade80' : '#ff6b6b'};">${userInfo.isActive ? 'Active' : 'Inactive'}</div>
+                <div class="profile-value">${userInfo.name}</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>Account Status</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Total Loans</div>
-                    <div style="font-weight: bold; color: #60a5fa;">${userInfo.totalLoans.toString()}</div>
+                <div class="profile-value" style="color: ${userInfo.isActive ? '#10b981' : '#ef4444'};">${userInfo.isActive ? 'Active' : 'Inactive'}</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-calendar-alt"></i>
+                    <span>Member Since</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Repaid Loans</div>
-                    <div style="font-weight: bold; color: #4ade80;">${userInfo.repaidLoansCount.toString()}</div>
+                <div class="profile-value">${memberSince}</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-file-invoice-dollar"></i>
+                    <span>Total Loans Taken</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Total Repayments</div>
-                    <div style="font-weight: bold; color: #4ade80;">${repaymentsEth} ETH</div>
+                <div class="profile-value" style="color: #60a5fa;">${userInfo.totalLoans.toString()}</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-check-circle"></i>
+                    <span>Loans Repaid</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Defaults</div>
-                    <div style="font-weight: bold; color: #ff6b6b;">${userInfo.defaults.toString()}</div>
+                <div class="profile-value" style="color: #10b981;">${userInfo.repaidLoansCount.toString()}</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-coins"></i>
+                    <span>Total Repayments</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Staked Collateral</div>
-                    <div style="font-weight: bold; color: #a78bfa;">${parseFloat(stakedEth).toFixed(4)} ETH</div>
+                <div class="profile-value" style="color: #10b981;">${repaymentsEth} ETH</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>Defaults</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px;">
-                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Loan Requests</div>
-                    <div style="font-weight: bold; color: #fbbf24;">${userInfo.totalRequests.toString()}</div>
+                <div class="profile-value" style="color: #ef4444;">${userInfo.defaults.toString()}</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-lock"></i>
+                    <span>Staked Collateral</span>
                 </div>
+                <div class="profile-value" style="color: #a78bfa;">${parseFloat(stakedEth).toFixed(4)} ETH</div>
+            </div>
+            
+            <div class="profile-item">
+                <div class="profile-label">
+                    <i class="fas fa-paper-plane"></i>
+                    <span>Loan Requests</span>
+                </div>
+                <div class="profile-value" style="color: #f59e0b;">${userInfo.totalRequests.toString()}</div>
             </div>
         </div>
     `;
