@@ -1,46 +1,75 @@
-// Web3 Utility Functions
+// ========================================
+// Web3 Utility Functions for Credit Score DApp
+// Ethers.js v6 | Sepolia Testnet
+// ========================================
+
 let provider;
 let signer;
 let userAddress;
 let contractAddress = CONFIG.CONTRACT_ADDRESS;
 let contract = null;
 
-// 1. ABI Definition
+// ========================================
+// CONTRACT ABI - Generated from CreditScore.sol
+// ========================================
 const CONTRACT_ABI = [
-    "function registerUser(string _name) public",
-    "function recordRepayment(uint256 _loanId) public payable",
-    "function recordDefault(uint256 _loanId) public",
-    "function recordLatePayment(uint256 _loanId) public",
+    // ===== USER FUNCTIONS =====
+    "function registerUser(string memory _name) public",
     "function requestLoan(uint256 _amount, uint256 _interestRate, uint256 _durationDays, string memory _reason) public",
-    "function approveLoan(address _borrower, uint256 _requestIndex) public payable",
-    "function rejectLoan(address _borrower, uint256 _requestIndex, string memory _reason) public",
-    "function getLoanRequests(address _user) public view returns (tuple(uint256 requestId, address borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason, bool isApproved, bool isActive)[])",
-    "function getCreditScore(address _user) public view returns (uint256)",
-    "function getCreditScoreBreakdown(address _user) public view returns (uint256, uint256, uint256, uint256, uint256, uint256)",
-    "function getFinancialHistory(address _user) public view returns (tuple(string activityType, uint256 amount, string description, uint256 timestamp)[])",
-    "function getUserLoans(address _user) public view returns (tuple(uint256 loanId, address borrower, uint256 principal, uint256 interestRate, uint256 issueDate, uint256 dueDate, uint256 repaidAmount, uint256 totalAmountToRepay, bool isRepaid, bool isDefaulted)[])",
-    "function userExists(address _user) public view returns (bool)",
-    "function getUserInfoBasic(address _user) public view returns (string memory name, uint256 creditScore, bool isActive, uint256 lastUpdated, uint256 stakedAmount)",
-    "function getUserInfoStats(address _user) public view returns (uint256 totalLoans, uint256 totalRepayments, uint256 defaults, uint256 totalRequests, uint256 repaidLoansCount)",
-    "function getAdmin() public view returns (address)",
-    "function getLoanCount() public view returns (uint256)",
-    "function calculateTotalDebt(address _user) public view returns (uint256)",
+    "function recordRepayment(uint256 _loanId) public payable",
     "function stake() public payable",
     "function unstake(uint256 _amount) public",
-    "function stakes(address _user) public view returns (uint256)",
+    
+    // ===== ADMIN FUNCTIONS =====
+    "function approveLoan(address _borrower, uint256 _requestIndex) public payable",
+    "function rejectLoan(address _borrower, uint256 _requestIndex, string memory _reason) public",
+    "function recordLatePayment(uint256 _loanId) public",
+    "function recordDefault(uint256 _loanId) public",
     "function updateExternalScore(address _user, uint256 _score) public",
-    "function externalScores(address _user) public view returns (uint256)",
+    
+    // ===== VIEW FUNCTIONS - User Data =====
+    "function getCreditScore(address _user) public view returns (uint256)",
+    "function getCreditScoreBreakdown(address _user) public view returns (uint256, uint256, uint256, uint256, uint256, uint256)",
+    "function getUserInfoBasic(address _user) public view returns (string memory, uint256, bool, uint256, uint256)",
+    "function getUserInfoStats(address _user) public view returns (uint256, uint256, uint256, uint256, uint256)",
+    "function userExists(address _user) public view returns (bool)",
+    
+    // ===== VIEW FUNCTIONS - Loan Data =====
+    "function getUserLoans(address _user) public view returns (tuple(uint256 loanId, address borrower, uint256 principal, uint256 interestRate, uint256 issueDate, uint256 dueDate, uint256 repaidAmount, uint256 totalAmountToRepay, bool isRepaid, bool isLate, bool isDefaulted)[])",
+    "function getLoanRequests(address _user) public view returns (tuple(uint256 requestId, address borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason, bool isApproved, bool isActive)[])",
+    "function getFinancialHistory(address _user) public view returns (tuple(string activityType, uint256 amount, string description, uint256 timestamp)[])",
+    "function calculateTotalDebt(address _user) public view returns (uint256)",
+    
+    // ===== VIEW FUNCTIONS - System =====
+    "function getAdmin() public view returns (address)",
+    "function getLoanCount() public view returns (uint256)",
     "function getAllUsers() public view returns (address[])",
+    
+    // ===== PUBLIC STATE VARIABLES =====
+    "function stakes(address _user) public view returns (uint256)",
+    "function externalScores(address _user) public view returns (uint256)",
+    "function admin() public view returns (address)",
+    "function registeredUsers(address _user) public view returns (bool)",
+    "function loanBorrower(uint256 _loanId) public view returns (address)",
+    
+    // ===== EVENTS =====
+    "event UserRegistered(address indexed user, string name, uint256 timestamp)",
     "event LoanRequested(uint256 indexed requestId, address indexed borrower, uint256 amount, uint256 interestRate, uint256 durationDays, string reason)",
     "event LoanApproved(uint256 indexed requestId, uint256 indexed loanId, address indexed borrower)",
     "event LoanRejected(uint256 indexed requestId, address indexed borrower, string reason, uint256 timestamp)",
     "event LoanCreated(uint256 indexed loanId, address indexed borrower, uint256 principal, uint256 interestRate, uint256 dueDate)",
+    "event RepaymentRecorded(uint256 indexed loanId, address indexed borrower, uint256 amount, uint256 timestamp)",
+    "event LatePaymentRecorded(uint256 indexed loanId, address indexed borrower, uint256 timestamp)",
+    "event DefaultRecorded(uint256 indexed loanId, address indexed borrower, uint256 timestamp)",
+    "event CreditScoreUpdated(address indexed user, uint256 newScore, uint256 timestamp)",
     "event Staked(address indexed user, uint256 amount, uint256 timestamp)",
     "event Unstaked(address indexed user, uint256 amount, uint256 timestamp)",
     "event ExternalScoreUpdated(address indexed user, uint256 score, uint256 timestamp)"
 ];
 
-// Error parsing helper function
+// ========================================
+// ERROR PARSING HELPER
+// ========================================
 function parseErrorMessage(error) {
     // Check for contract revert reason first
     if (error.reason) {
@@ -48,7 +77,7 @@ function parseErrorMessage(error) {
     }
     
     // Check for user rejection
-    if (error.code === 'ACTION_REJECTED') {
+    if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
         return 'User rejected transaction';
     }
     
@@ -71,10 +100,12 @@ function parseErrorMessage(error) {
     return 'Transaction Failed';
 }
 
-// Set contract address
+// ========================================
+// CONTRACT ADDRESS MANAGEMENT
+// ========================================
 function setContractAddress(newAddress) {
     if (!ethers.isAddress(newAddress)) {
-        showStatus("Invalid contract address", "error");
+        console.error("Invalid contract address");
         return false;
     }
     contractAddress = newAddress;
@@ -82,69 +113,124 @@ function setContractAddress(newAddress) {
     if (signer) {
         contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
     }
-    showStatus("Contract address set successfully!", "success");
+    console.log("Contract address set successfully!");
     return true;
 }
 
-function getContractAddress() { return contractAddress; }
+function getContractAddress() { 
+    return contractAddress; 
+}
 
-// Initialize Web3
+// ========================================
+// WEB3 INITIALIZATION
+// ========================================
 async function initWeb3() {
-    if (window.ethereum) {
-        try {
-            provider = new ethers.BrowserProvider(window.ethereum);
-            window.ethereum.on('chainChanged', () => window.location.reload());
-            window.ethereum.on('accountsChanged', (accounts) => {
-                if (accounts.length === 0) disconnectWallet();
-                else { userAddress = accounts[0]; updateWalletStatus(); }
-            });
-            
-
-            
-            return true;
-        } catch (error) {
-            console.error("Error initializing Web3:", error);
-            return false;
-        }
-    } else {
+    if (!window.ethereum) {
         console.warn("MetaMask not detected");
+        return false;
+    }
+
+    try {
+        provider = new ethers.BrowserProvider(window.ethereum);
+        
+        // Listen for chain changes
+        window.ethereum.on('chainChanged', () => {
+            window.location.reload();
+        });
+        
+        // Listen for account changes
+        window.ethereum.on('accountsChanged', (accounts) => {
+            if (accounts.length === 0) {
+                disconnectWallet();
+            } else {
+                userAddress = accounts[0];
+                updateWalletStatus();
+            }
+        });
+        
+        return true;
+    } catch (error) {
+        console.error("Error initializing Web3:", error);
         return false;
     }
 }
 
-// Connect Wallet
+// ========================================
+// WALLET CONNECTION (SEPOLIA ONLY)
+// ========================================
 async function connectWallet() {
+    if (!window.ethereum) {
+        alert("Please install MetaMask to use this DApp");
+        return false;
+    }
+
     try {
+        // Step 1: Switch to Sepolia network (Chain ID: 11155111 / 0xaa36a7)
         try {
             await window.ethereum.request({
                 method: 'wallet_switchEthereumChain',
                 params: [{ chainId: '0xaa36a7' }]
             });
         } catch (switchError) {
+            // Chain doesn't exist in wallet, add it
             if (switchError.code === 4902) {
-                await window.ethereum.request({
-                    method: 'wallet_addEthereumChain',
-                    params: [{
-                        chainId: '0xaa36a7',
-                        chainName: 'Sepolia',
-                        rpcUrls: ['https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eac5c8cb99'],
-                        nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-                        blockExplorerUrls: ['https://sepolia.etherscan.io/']
-                    }]
-                });
+                try {
+                    await window.ethereum.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [{
+                            chainId: '0xaa36a7',
+                            chainName: 'Sepolia Testnet',
+                            rpcUrls: ['https://sepolia.infura.io/v3/'],
+                            nativeCurrency: {
+                                name: 'Sepolia ETH',
+                                symbol: 'ETH',
+                                decimals: 18
+                            },
+                            blockExplorerUrls: ['https://sepolia.etherscan.io']
+                        }]
+                    });
+                } catch (addError) {
+                    console.error("Failed to add Sepolia network:", addError);
+                    return false;
+                }
+            } else if (switchError.code === 4001) {
+                // User rejected network switch
+                console.log("User rejected network switch");
+                return false;
+            } else {
+                throw switchError;
             }
         }
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+
+        // Step 2: Request account access
+        const accounts = await window.ethereum.request({ 
+            method: 'eth_requestAccounts' 
+        });
+        
+        if (accounts.length === 0) {
+            console.error("No accounts found");
+            return false;
+        }
+
         userAddress = accounts[0];
         signer = await provider.getSigner();
+        
+        // Step 3: Initialize contract
         if (contractAddress && ethers.isAddress(contractAddress)) {
             contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
         }
+        
         updateWalletStatus();
         return true;
+        
     } catch (error) {
         console.error("Error connecting wallet:", error);
-        showStatus("Error connecting wallet", "error");
+        
+        // Handle user rejection gracefully
+        if (error.code === 4001 || error.code === 'ACTION_REJECTED') {
+            console.log("User rejected connection request");
+        }
+        
         return false;
     }
 }
