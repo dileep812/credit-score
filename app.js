@@ -1156,8 +1156,20 @@ function displayScoreBreakdown(breakdown) {
         { label: 'External Score', score: breakdown.oracleScore, max: 50, color: '#f472b6' }
     ];
     
+    // Calculate sum of positive components
+    const sumOfPositives = parseInt(breakdown.paymentHistoryScore) + 
+                          parseInt(breakdown.repaymentConsistencyScore) + 
+                          parseInt(breakdown.loanActivityScore) + 
+                          parseInt(breakdown.collateralScore) + 
+                          parseInt(breakdown.oracleScore);
+    
+    // Calculate penalty (Hard Inquiry Penalty)
+    const finalScore = parseInt(breakdown.totalScore);
+    const penalty = sumOfPositives - finalScore;
+    
     let html = '<div style="display: grid; gap: 0.75rem;">';
     
+    // Display positive components
     for (const item of items) {
         const percentage = (item.score / item.max) * 100;
         html += `
@@ -1172,6 +1184,44 @@ function displayScoreBreakdown(breakdown) {
             </div>
         `;
     }
+    
+    // Display Hard Inquiry Penalty if it exists
+    if (penalty > 0) {
+        html += `
+            <div style="border-top: 1px solid #444; padding-top: 0.75rem; margin-top: 0.25rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                    <span style="color: #ccc; font-size: 0.9rem;">
+                        <i class="fas fa-exclamation-circle" style="color: #ef4444; margin-right: 0.5rem;"></i>
+                        Hard Inquiries (Penalty)
+                    </span>
+                    <span style="color: #ef4444; font-weight: bold;">-${penalty}</span>
+                </div>
+                <div style="background: #333; height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="background: #ef4444; height: 100%; width: 100%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Display Final Score Total
+    html += `
+        <div style="border-top: 2px solid #555; padding-top: 0.75rem; margin-top: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #fff; font-size: 1.1rem; font-weight: 600;">
+                    <i class="fas fa-calculator" style="color: #a78bfa; margin-right: 0.5rem;"></i>
+                    Final Credit Score
+                </span>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.85rem; color: #888; margin-bottom: 0.25rem;">
+                        ${sumOfPositives}${penalty > 0 ? ` - ${penalty}` : ''} = 
+                    </div>
+                    <div style="font-size: 1.5rem; font-weight: bold; color: #a78bfa;">
+                        ${finalScore}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
     
     html += '</div>';
     breakdownDiv.innerHTML = html;
